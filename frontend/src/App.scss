@@ -1,0 +1,51 @@
+$primary-color: #ffffff; // Белый для контраста с темным фоном
+$secondary-color: #06b6d4; // Акцентный цвет
+$text-color: #e6eef3; // Основной текст
+
+.App {
+  background-image: url("./Img/island.jpg");
+  background-size: cover;
+  background-position: center;
+  color: $text-color; // Устанавливаем цвет текста для контраста
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+
+  .App-header {
+    position: absolute;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.6); // Полупрозрачный фон для контраста
+  }
+  .App-header.active {
+
+  }
+
+  .footer {
+    position: absolute;
+    bottom: 0px;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.6); // Полупрозрачный фон для контраста
+  }
+
+  .main {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 150px;
+    padding: 40px 16px 40px 16px;
+    width: 1200px;
+    margin: 0 auto;
+    background: rgba(0, 0, 0, 0.8); // Светлый фон для читаемости
+    border-radius: 10px;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.container {
+  width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

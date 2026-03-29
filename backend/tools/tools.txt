@@ -1,0 +1,14 @@
+nmap
+wpscan
+wappalyzer
+nuclei
+subfinder
+whatweb
+
+subfinder
+amass
+Wayback Machine
+
+katana 
+jsfinder
+gobuster

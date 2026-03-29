@@ -1,0 +1,173 @@
+$bg: #0f1724;
+$text: #e6eef3;
+$accent: #06b6d4;
+
+.App-header {
+  background: $bg;
+  color: $text;
+  padding: 20px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.4s;
+  height: 34px;
+
+  .container {
+    transition: all 0.4s;
+    position: relative;
+    height: 100px;
+
+    .nav {
+      display: flex;
+      gap: 16px;
+      position: absolute;
+      top: 5px;
+      left: 0;
+    }
+
+    .nav .a {
+      color: $text;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+
+    .nav .a:hover {
+      color: $accent;
+    }
+
+    .nav .a.active {
+      color: $accent;
+      font-weight: bold;
+    }
+
+    .cyber__scope {
+      color: $text;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.2s;
+      position: absolute;
+      top: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+
+    }
+
+    .cyber__scope:hover {
+      color: $accent;
+    }
+
+    .nav_language-exit {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: flex;
+      gap: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      .btn__language {
+
+        background: transparent;
+        border: 1px solid $accent;
+        color: $accent;
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.2s, color 0.2s;
+        margin-right: 15px;
+      }
+
+      .btn__language:hover {
+        background: $accent;
+        color: $bg;
+      }
+
+      .btn__exit {
+
+        background: $accent;
+        color: $bg;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.2s, color 0.2s;
+      }
+
+      .btn__exit:hover {
+        transform: scale(1.05);
+        background: $text;
+      }
+    }
+
+
+  }
+
+
+}
+
+.App-header.active {
+  top: -75px;
+  transition: all 0.4s;
+
+  .container {
+    .nav {
+      display: flex;
+      gap: 16px;
+    }
+
+    .nav .a {
+      color: $text;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+
+    .nav .a:hover {
+      color: $accent;
+    }
+
+    .nav .a.active {
+      color: $accent;
+      font-weight: bold;
+    }
+
+    .btn__language {
+      background: transparent;
+      border: 1px solid $accent;
+      color: $accent;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s, color 0.2s;
+      margin-right: 15px;
+    }
+
+    .btn__language:hover {
+      background: $accent;
+      color: $bg;
+    }
+
+    .btn__exit {
+      background: $accent;
+      color: $bg;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .btn__exit:hover {
+      transform: scale(1.05);
+      background: $text;
+    }
+  }
+
+}

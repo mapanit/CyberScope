@@ -1,0 +1,32 @@
+.main__tools {
+  .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    flex-direction: column;
+    padding-left: 30px;
+
+    .h3 {
+      font-size: 24px;
+      width: 850px;
+    }
+    .btn {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #06b6d4;
+      color: #022026;
+      font-size: 14px;
+      padding: 12px 19px;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.7s ease;
+    }
+    .btn:hover {
+      background: #ffffff00;
+      color: #06b6d4;
+      border: 1px solid rgb(255, 241, 241);
+    }
+  }
+}
