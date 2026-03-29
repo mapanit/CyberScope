@@ -111,15 +111,6 @@ def nuclei_run_scan(target: str, save_reports: bool = False, reports_dir: str = 
     return result
 
 
-def katana_simple_scan(target: str) -> dict:
-    """Заглушка для katana сканирования"""
-    return {
-        'status': 'completed',
-        'summary': {},
-        'message': 'Katana не установлен на сервере'
-    }
-
-
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -160,41 +151,6 @@ def validate_target(target: str, allow_internal: bool = False) -> str:
 
     # Умышленно НЕ требуем схему http(s): поддерживаем и домены без http://
     return target
-
-
-async def sse_stream_dirsearch(target: str):
-    dirsearch_path = "../tools/dirsearch/dirsearch.py"
-    if not os.path.exists(dirsearch_path):
-        raise HTTPException(
-            status_code=500, detail="dirsearch script not found on server")
-
-    cmd = ["python", dirsearch_path, "-u",
-           target, "-e", "php,html,asp,aspx,js"]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT
-        )
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=500, detail="Не удалось запустить Python или скрипт dirsearch") from e
-    except NotImplementedError as e:
-        raise HTTPException(
-            status_code=500, detail="Async subprocess не поддерживается в текущем цикле событий (Windows). Установите WindowsProactorEventLoopPolicy.") from e
-    try:
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            text = line.decode(errors="ignore").rstrip()
-
-            yield f"data: {text}\n\n"
-        await proc.wait()
-        yield f"data: [DONE] exit={proc.returncode}\n\n"
-    except asyncio.CancelledError:
-        proc.kill()
-        raise
 
 
 def extract_domain(target: str) -> str:
@@ -478,9 +434,6 @@ async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: 
     if not q:
         raise HTTPException(status_code=400, detail="Empty query")
 
-    if tool in ("dirsearch", "sublist3r"):
-        raise HTTPException(
-            status_code=400, detail="Use streaming endpoints /scan or /sublist3r for that tool")
 
     if tool == "whois":
         domain = extract_domain(q)
