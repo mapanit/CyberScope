@@ -26,7 +26,11 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     { id: "wappalyzer", label: "Wappalyzer", icon: "⚙️" },
     { id: "nuclei", label: "Nuclei", icon: "🎯" },
     { id: "whois", label: "WhoIS", icon: "📝" },
-    { id: "web", label: "Web", icon: "🌍" }
+    { id: "web", label: "Web", icon: "🌍" },
+    { id: "retire", label: "Retire", icon: "🌍" },
+    { id: "cors", label: "CORS", icon: "🌍" },
+    { id: "ssl-tls", label: "SSL/TLS", icon: "🌍" }
+    
   ];
 
   // Загрузка сохраненных задач
