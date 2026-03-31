@@ -5,7 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: cyberscan-backend
+    container_name: cyberscope-backend
     ports:
       - "8000:8000"
     volumes:
@@ -14,13 +14,13 @@ services:
       - PYTHONUNBUFFERED=1
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
     networks:
-      - cyberscan-network
+      - cyberscope-network
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: cyberscan-frontend
+    container_name: cyberscope-frontend
     ports:
       - "3000:3000"
     volumes:
@@ -32,8 +32,8 @@ services:
     depends_on:
       - backend
     networks:
-      - cyberscan-network
+      - cyberscope-network
 
 networks:
-  cyberscan-network:
+  cyberscope-network:
     driver: bridge
