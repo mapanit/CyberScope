@@ -22,6 +22,8 @@ from scanners.web_url_scanner import simple_scan as web_scan
 from scanners.retire_scanner import simple_scan as retire_scan
 from scanners.cors_scanner import CORSScanner
 from scanners.ssl_tls_scanner import SSLTLSScanner
+from scanners.dns_scanner import simple_scan as dns_scan
+from scanners.nmap_scanner import NmapScanner, simple_scan as nmap_scan
 from core.report_utils import create_combined_report
 
 # Глобальный словарь для отслеживания статуса сканирований
@@ -1011,6 +1013,48 @@ async def api_ssl_tls(
             status_code=500, detail=f"Ошибка при SSL/TLS сканировании: {str(e)}")
 
 
+@app.get("/api/dns")
+async def api_dns(
+    target: str = Query(..., description="Домен или IP адрес для DNS сканирования"),
+    allow_internal: bool = Query(
+        False, description="Разрешить сканирование внутренних адресов"),
+    selected_tools: str = Query(
+        "dns", description="Выбранные инструменты (comma-separated)")
+):
+    """Запуск DNS сканирования для перечисления DNS записей"""
+    try:
+        # Валидируем target
+        validate_target(target, allow_internal=allow_internal)
+
+        # Определяем директорию для отчетов
+        reports_base = Path(__file__).parent / "reports"
+
+        # Запускаем DNS сканирование с сохранением отчетов
+        result = await asyncio.to_thread(dns_scan, target, str(reports_base))
+
+        # Создаем объединённый отчет
+        scan_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        combined_reports = create_combined_report(
+            scan_id, reports_base, recent_minutes=10)
+
+        return {
+            "tool": "dns",
+            "target": target,
+            "status": "success",
+            "dns_records_count": result.get('total', 0),
+            "nameservers": result.get('nameservers', []),
+            "dns_records": result.get('dns_records', {}),
+            "individual_reports": result.get('reports', {}),
+            "combined_reports": combined_reports
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при DNS сканировании: {str(e)}")
+
+
 @app.post("/api/cancel-scan")
 async def cancel_scan(scan_id: str = Query(..., description="ID сканирования для отмены")):
     """Отменить активное сканирование по ID"""
@@ -1068,6 +1112,71 @@ async def get_scan_status(scan_id: str = Query(..., description="ID сканир
             status_code=500, detail=f"Ошибка при получении статуса: {str(e)}")
 
 
+@app.get("/api/nmap")
+async def api_nmap(
+    target: str = Query(..., description="Хост, IP адрес или IP диапазон для сканирования"),
+    allow_internal: bool = Query(
+        False, description="Разрешить сканирование внутренних адресов"),
+    arguments: str = Query("-sV -sC --top-ports 1000", description="Аргументы для Nmap"),
+    selected_tools: str = Query(
+        "nmap", description="Выбранные инструменты (comma-separated)")
+):
+    """Запуск Nmap для сканирования портов и определения сервисов"""
+    try:
+        # Валидация цели
+        validate_target(target, allow_internal=allow_internal)
+
+        # Определяем директорию для отчетов
+        reports_base = Path(__file__).parent / "reports"
+
+        # Создаем Nmap сканер
+        scanner = NmapScanner(target, reports_dir=str(reports_base))
+
+        # Запускаем сканирование
+        success = await asyncio.to_thread(scanner.run_scan, arguments)
+
+        if not success:
+            raise HTTPException(
+                status_code=500, detail="Ошибка при запуске Nmap сканирования")
+
+        # Парсим результаты и ищем CVE
+        await asyncio.to_thread(scanner.parse_results)
+
+        # Сохраняем отчеты
+        reports = await asyncio.to_thread(scanner.save_reports)
+
+        # Создаем объединённый отчет
+        scan_id = scanner.scan_id
+        combined_reports = await asyncio.to_thread(
+            create_combined_report,
+            scan_id, reports_base, 10
+        )
+
+        return {
+            "tool": "nmap",
+            "target": target,
+            "status": "success",
+            "scan_id": scan_id,
+            "summary": {
+                "hosts_discovered": len(scanner.discovered_hosts),
+                "open_ports": len(scanner.open_ports),
+                "vulnerabilities": len(scanner.vulnerabilities),
+                "vulnerabilities_by_severity": scanner._count_by_severity()
+            },
+            "hosts": scanner.discovered_hosts,
+            "vulnerabilities": scanner.vulnerabilities,
+            "recommendations": scanner._get_recommendations(),
+            "individual_reports": reports,
+            "combined_reports": combined_reports
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при Nmap сканировании: {str(e)}")
+
+
 @app.post("/api/run-selected-tools")
 async def run_selected_tools(
     target: str = Query(..., description="URL или домен для сканирования"),
@@ -1117,7 +1226,7 @@ async def run_selected_tools(
 
         # Валидируем инструменты
         available_tools = ['wappalyzer', 'nuclei', 'katana',
-                           'amass', 'scanner', 'whois', 'osint', 'web', 'retire', 'cors', 'ssl-tls']
+                           'amass', 'scanner', 'whois', 'osint', 'web', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
         invalid_tools = [t for t in tools_list if t not in available_tools]
         if invalid_tools:
             raise HTTPException(
@@ -1267,6 +1376,19 @@ async def run_selected_tools(
                         'vulnerabilities_count': result.get('reports', {}).get('summary', {}).get('total_vulnerabilities', 0) if result else 0
                     }
 
+                elif tool == 'dns':
+                    domain = extract_domain(target)
+                    result = await asyncio.to_thread(dns_scan, domain, str(reports_base))
+                    results[tool] = {
+                        'status': 'success',
+                        'target': domain,
+                        'dns_records_count': result.get('total', 0),
+                        'nameservers': result.get('nameservers', []),
+                        'dns_records': result.get('dns_records', {}),
+                        'data': result,
+                        'reports': result.get('reports', {})
+                    }
+
                 elif tool == 'cors':
                     scanner = CORSScanner(target, None, str(reports_base))
                     await asyncio.to_thread(scanner.run_all_checks)
@@ -1294,6 +1416,31 @@ async def run_selected_tools(
                         'cipher_suites': scanner.cipher_suites,
                         'reports': reports
                     }
+
+                elif tool == 'nmap':
+                    scanner = NmapScanner(target, reports_dir=str(reports_base))
+                    success = await asyncio.to_thread(scanner.run_scan, "-sV -sC --top-ports 1000")
+                    
+                    if success:
+                        await asyncio.to_thread(scanner.parse_results)
+                        reports = await asyncio.to_thread(scanner.save_reports)
+                        results[tool] = {
+                            'status': 'success',
+                            'target': target,
+                            'hosts_discovered': len(scanner.discovered_hosts),
+                            'open_ports': len(scanner.open_ports),
+                            'vulnerabilities': len(scanner.vulnerabilities),
+                            'vulnerabilities_by_severity': scanner._count_by_severity(),
+                            'hosts': scanner.discovered_hosts,
+                            'vulnerabilities': scanner.vulnerabilities,
+                            'recommendations': scanner._get_recommendations(),
+                            'reports': reports
+                        }
+                    else:
+                        results[tool] = {
+                            'status': 'error',
+                            'error': 'Nmap scan failed'
+                        }
 
             except Exception as e:
                 results[tool] = {

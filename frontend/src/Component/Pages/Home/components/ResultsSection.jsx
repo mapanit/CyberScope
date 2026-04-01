@@ -6,19 +6,23 @@ const ResultsSection = ({
     expandedJsonTools,
     setExpandedJsonTools,
     renderScannerResults,
-    renderCombinedResults
+
+    renderCombinedResults,
+    language = "ru"
 }) => {
     if (!results) return null;
 
     return (
         <div className="results">
             <div className="results-header">
-                <h3>Результаты сканирования:</h3>
+
+                <h3>{language === "ru" ? 'Результаты сканирования:' : 'Scan Results:'}</h3>
             </div>
             
             {scanAborted && (
                 <div className="scan-aborted-message">
-                    ⚠️ Сканирование было отменено
+
+                    {language === "ru" ? '⚠️ Сканирование было отменено' : '⚠️ Scan was cancelled'}
                 </div>
             )}
             
@@ -30,7 +34,8 @@ const ResultsSection = ({
                         <div className="result-header">
                             <h4>{toolName.toUpperCase()}</h4>
                             {toolResult.cancelled && (
-                                <span className="cancelled-badge">Отменено</span>
+
+                                <span className="cancelled-badge">{language === "ru" ? 'Отменено' : 'Cancelled'}</span>
                             )}
                         </div>
                         
@@ -38,7 +43,10 @@ const ResultsSection = ({
                             renderScannerResults(toolResult)
                         ) : toolResult.error ? (
                             <div className="error-message">
-                                {toolResult.cancelled ? '⚠️ Сканирование отменено' : `Ошибка: ${toolResult.error}`}
+
+                                {toolResult.cancelled 
+                                    ? (language === "ru" ? '⚠️ Сканирование отменено' : '⚠️ Scan cancelled') 
+                                    : `${language === "ru" ? 'Ошибка' : 'Error'}: ${toolResult.error}`}
                             </div>
                         ) : toolResult.output ? (
                             <pre className="results__pre">

@@ -21,15 +21,17 @@ const ReportsPanel = ({
     deleteCombinedReport,
     deleteTxtReport,
     deleteAllWordReports,
-    clearAllReports
+
+    clearAllReports,
+    language = "ru"
 }) => {
     return (
         <div className="install__info">
-            <NavLink to="/help" className="help__link" activeClassName="help__link">Помощник</NavLink>
+            <NavLink to="/help" className="help__link" activeClassName="help__link">{language === "ru" ? 'Помощник' : 'Helper'}</NavLink>
             
             <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e0e0e0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <h6 className='h6'>🛠️ Управление отчетами</h6>
+                    <h6 className='h6'>🛠️ {language === "ru" ? 'Управление отчетами' : 'Report Management'}</h6>
                     <button
                         type="button"
                         onClick={clearAllReports}
@@ -45,20 +47,22 @@ const ReportsPanel = ({
                         }}
                         onMouseOver={(e) => e.target.style.backgroundColor = '#ee5a5a'}
                         onMouseOut={(e) => e.target.style.backgroundColor = '#ff6b6b'}
-                        title="Очистить ВСЕ отчеты (word, json, combined)"
+
+                        title={language === "ru" ? "Очистить ВСЕ отчеты (word, json, combined)" : "Clear ALL reports (word, json, combined)"}
                     >
-                        🗑️ Очистить ВСЕ отчеты
+                        🗑️ {language === "ru" ? 'Очистить ВСЕ отчеты' : 'Clear All Reports'}
                     </button>
                 </div>
                 <p style={{ fontSize: '11px', color: '#98a2b3', margin: '0' }}>
-                    Удалит все сохраненные отчеты (JSON, Word и объединённые)
+                    {language === "ru" ? 'Удалит все сохраненные отчеты (JSON, Word и объединённые)' : 'Delete all saved reports (JSON, Word and combined)'}
                 </p>
             </div>
             
             {wordReports.length > 0 && (
                 <div className="word-reports-list" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e0e0e0', overflowY: 'overlay'}}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                        <h6 className='h6'>Сохраненные отчеты</h6>
+
+                        <h6 className='h6'>{language === "ru" ? 'Сохраненные отчеты' : 'Saved Reports'}</h6>
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <button
                                 type="button"
@@ -76,7 +80,8 @@ const ReportsPanel = ({
                                 }}
                                 onMouseOver={(e) => !loadingReports && (e.target.style.backgroundColor = '#0052a3')}
                                 onMouseOut={(e) => !loadingReports && (e.target.style.backgroundColor = '#0066cc')}
-                                title="Обновить список отчетов"
+
+                                title={language === "ru" ? "Обновить список отчетов" : "Refresh report list"}
                             >
                                 ⟳
                             </button>
@@ -94,9 +99,10 @@ const ReportsPanel = ({
                                 }}
                                 onMouseOver={(e) => e.target.style.backgroundColor = '#990000'}
                                 onMouseOut={(e) => e.target.style.backgroundColor = '#cc3333'}
-                                title="Удалить все отчеты"
+
+                                title={language === "ru" ? "Удалить все отчеты" : "Delete all reports"}
                             >
-                                🗑️ Удалить всё
+                                🗑️ {language === "ru" ? 'Удалить всё' : 'Delete All'}
                             </button>
                         </div>
                     </div>
@@ -117,7 +123,7 @@ const ReportsPanel = ({
             {Object.keys(txtReports).length > 0 && (
                 <div className="txt-reports-list" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e0e0e0', overflowY: 'overlay'}}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                        <h6 className='h6'>📝 TXT Отчеты инструментов</h6>
+                        <h6 className='h6'>📝 {language === "ru" ? 'TXT Отчеты инструментов' : 'Tools TXT Reports'}</h6>
                         <button
                             type="button"
                             onClick={fetchTxtReports}
@@ -134,7 +140,7 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => !loadingTxtReports && (e.target.style.backgroundColor = '#0052a3')}
                             onMouseOut={(e) => !loadingTxtReports && (e.target.style.backgroundColor = '#0066cc')}
-                            title="Обновить список отчетов"
+                            title={language === "ru" ? "Обновить список отчетов" : "Refresh report list"}
                         >
                             ⟳
                         </button>
@@ -213,7 +219,7 @@ const ReportsPanel = ({
             {(combinedReports.json.length > 0 || combinedReports.txt.length > 0 || combinedReports.word.length > 0) && (
                 <div className="word-reports-list" style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e0e0e0' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                        <h6 className='h6'>📊 Скомпилированные отчеты</h6>
+                        <h6 className='h6'>📊 {language === "ru" ? 'Скомпилированные отчеты' : 'Combined Reports'}</h6>
                         <button
                             type="button"
                             onClick={fetchCombinedReports}
@@ -230,7 +236,7 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => !loadingCombined && (e.target.style.backgroundColor = '#0052a3')}
                             onMouseOut={(e) => !loadingCombined && (e.target.style.backgroundColor = '#0066cc')}
-                            title="Обновить список отчетов"
+                            title={language === "ru" ? "Обновить список отчетов" : "Refresh report list"}
                         >
                             ⟳
                         </button>
@@ -252,9 +258,9 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => combinedReportFilter !== 'all' && (e.target.style.backgroundColor = '#d0d0d0')}
                             onMouseOut={(e) => combinedReportFilter !== 'all' && (e.target.style.backgroundColor = '#e0e0e0')}
-                            title="Показать все отчеты"
+                            title={language === "ru" ? "Показать все отчеты" : "Show all reports"}
                         >
-                            Все ({combinedReports.json.length + combinedReports.txt.length + combinedReports.word.length})
+                            {language === "ru" ? 'Все' : 'All'} ({combinedReports.json.length + combinedReports.txt.length + combinedReports.word.length})
                         </button>
                         <button
                             type="button"
@@ -270,7 +276,8 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => combinedReportFilter !== 'json' && (e.target.style.backgroundColor = '#d0e6f7')}
                             onMouseOut={(e) => combinedReportFilter !== 'json' && (e.target.style.backgroundColor = '#e8f4fd')}
-                            title="Показать только JSON отчеты"
+
+                            title={language === "ru" ? "Показать только JSON отчеты" : "Show only JSON reports"}
                         >
                             📄 JSON ({combinedReports.json.length})
                         </button>
@@ -288,7 +295,8 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => combinedReportFilter !== 'txt' && (e.target.style.backgroundColor = '#ffe6cc')}
                             onMouseOut={(e) => combinedReportFilter !== 'txt' && (e.target.style.backgroundColor = '#fff4e6')}
-                            title="Показать только TXT отчеты"
+
+                            title={language === "ru" ? "Показать только TXT отчеты" : "Show only TXT reports"}
                         >
                             📝 TXT ({combinedReports.txt.length})
                         </button>
@@ -306,7 +314,8 @@ const ReportsPanel = ({
                             }}
                             onMouseOver={(e) => combinedReportFilter !== 'word' && (e.target.style.backgroundColor = '#d0f5d0')}
                             onMouseOut={(e) => combinedReportFilter !== 'word' && (e.target.style.backgroundColor = '#e8f8e8')}
-                            title="Показать только WORD отчеты"
+
+                            title={language === "ru" ? "Показать только WORD отчеты" : "Show only WORD reports"}
                         >
                             📝 WORD ({combinedReports.word.length})
                         </button>
@@ -314,7 +323,8 @@ const ReportsPanel = ({
                     
                     {(combinedReportFilter === 'all' || combinedReportFilter === 'json') && combinedReports.json.length > 0 && (
                         <div style={{ marginBottom: '12px' }}>
-                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>JSON отчеты:</h6>
+
+                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{language === "ru" ? 'JSON отчеты:' : 'JSON Reports:'}</h6>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {combinedReports.json.map((report, index) => (
                                     <ReportRow 
@@ -333,7 +343,8 @@ const ReportsPanel = ({
                     
                     {(combinedReportFilter === 'all' || combinedReportFilter === 'txt') && combinedReports.txt.length > 0 && (
                         <div style={{ marginBottom: '12px' }}>
-                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>TXT отчеты:</h6>
+
+                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{language === "ru" ? 'TXT отчеты:' : 'TXT Reports:'}</h6>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {combinedReports.txt.map((report, index) => (
                                     <ReportRow 
@@ -352,7 +363,8 @@ const ReportsPanel = ({
                     
                     {(combinedReportFilter === 'all' || combinedReportFilter === 'word') && combinedReports.word.length > 0 && (
                         <div>
-                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>WORD отчеты:</h6>
+
+                            <h6 style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>{language === "ru" ? 'WORD отчеты:' : 'WORD Reports:'}</h6>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {combinedReports.word.map((report, index) => (
                                     <ReportRow 

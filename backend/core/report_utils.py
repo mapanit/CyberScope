@@ -11,6 +11,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 from abc import ABC, abstractmethod
+try:
+    import nvdlib
+    NVDLIB_AVAILABLE = True
+except ImportError:
+    NVDLIB_AVAILABLE = False
 
 
 class ReportBase(ABC):
@@ -144,7 +149,7 @@ class CombinedReport:
 
         # Список инструментов для сбора
         tools = ['wappalyzer', 'scanner', 'nuclei',
-                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors']
+                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
 
         collected_files = {}
 
@@ -209,7 +214,7 @@ class CombinedReport:
 
         # Список инструментов для сбора
         tools = ['wappalyzer', 'scanner', 'nuclei',
-                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls']
+                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
 
         collected_files = {}
 
@@ -278,7 +283,7 @@ class CombinedReport:
         try:
             # Порядок инструментов для объединения
             tool_order = ['wappalyzer', 'scanner', 'nuclei',
-                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls']
+                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
 
             # Заголовок объединенного отчета
             with open(output_path, 'w', encoding='utf-8') as output_file:
@@ -473,7 +478,9 @@ class CombinedReport:
             'subdomains': [],
             'urls': [],
             'technologies': [],
-            'hosts': []
+            'hosts': [],
+            'dns_records': [],
+            'nameservers': []
         }
 
         for tool_name, report in self.tool_reports.items():
@@ -540,6 +547,81 @@ class CombinedReport:
                             'name': tech_name,
                             'version': tech.get('version') if isinstance(tech, dict) else 'unknown'
                         })
+
+            # DNS записи
+            elif tool_name == 'dns' and 'dns_records' in report:
+                # Добавляем nameservers
+                for ns in report.get('nameservers', []):
+                    if ns not in detailed['nameservers']:
+                        detailed['nameservers'].append(ns)
+                
+                # Добавляем DNS записи
+                for record_type, records in report.get('dns_records', {}).items():
+                    for record in records:
+                        if isinstance(record, dict):
+                            # Для NS записей с IP-адресами
+                            if 'nameserver' in record:
+                                detailed['dns_records'].append({
+                                    'type': 'NS',
+                                    'nameserver': record.get('nameserver'),
+                                    'ips': record.get('ips', [])
+                                })
+                            # Для MX записей
+                            elif 'server' in record and 'priority' in record:
+                                detailed['dns_records'].append({
+                                    'type': 'MX',
+                                    'server': record.get('server'),
+                                    'priority': record.get('priority')
+                                })
+                            # Для SOA записей
+                            elif 'mname' in record:
+                                detailed['dns_records'].append({
+                                    'type': 'SOA',
+                                    'mname': record.get('mname'),
+                                    'rname': record.get('rname'),
+                                    'serial': record.get('serial')
+                                })
+                        else:
+                            # Простые записи (A, AAAA, CNAME, TXT)
+                            detailed['dns_records'].append({
+                                'type': record_type,
+                                'value': str(record)
+                            })
+
+            # Данные от Nmap
+            elif tool_name == 'nmap':
+                # Уязвимости от Nmap
+                if 'vulnerabilities' in report:
+                    for vuln in report.get('vulnerabilities', []):
+                        detailed['vulnerabilities'].append({
+                            'tool': 'nmap',
+                            'cve_id': vuln.get('cve_id', 'Unknown'),
+                            'severity': vuln.get('severity', 'unknown'),
+                            'service': vuln.get('service'),
+                            'port': vuln.get('port'),
+                            'host': vuln.get('host'),
+                            'version': vuln.get('version'),
+                            'description': vuln.get('description')
+                        })
+                
+                # Хосты и открытые порты от Nmap
+                if 'hosts' in report:
+                    for host in report.get('hosts', []):
+                        host_addr = host.get('host')
+                        if host_addr and host_addr not in detailed['hosts']:
+                            detailed['hosts'].append(host_addr)
+                
+                # На структурированные данные
+                if 'summary' in report and 'total_open_ports' in report['summary']:
+                    # Добавляем подробные данные портов если доступны
+                    if isinstance(report.get('hosts'), list):
+                        for host_info in report.get('hosts', []):
+                            if 'ports' in host_info:
+                                for port in host_info.get('ports', []):
+                                    if port.get('state') == 'open':
+                                        detailed['urls'].append(
+                                            f"{host_info.get('host')}:{port.get('port')}/{port.get('service')}"
+                                        )
 
         return detailed
 
@@ -631,6 +713,49 @@ class CombinedReport:
                             summary['by_severity'][severity] += 1
                         else:
                             summary['by_severity']['low'] += 1
+
+            elif tool_name == 'dns':
+                dns_records = report.get('dns_records', {})
+                total_records = sum(len(records) for records in dns_records.values()) if isinstance(dns_records, dict) else 0
+                nameservers = report.get('nameservers', [])
+                tool_summary['findings'] = total_records
+                tool_summary['dns_records_count'] = total_records
+                tool_summary['nameservers_count'] = len(nameservers)
+                summary['total_findings'] += total_records
+
+            elif tool_name == 'nmap':
+                # Обработка результатов Nmap
+                if 'summary' in report:
+                    summary_data = report['summary']
+                    total_vulns = summary_data.get('total_vulnerabilities', 0)
+                    total_ports = summary_data.get('total_open_ports', 0)
+                    
+                    tool_summary['findings'] = total_ports
+                    tool_summary['vulnerabilities'] = total_vulns
+                    tool_summary['hosts_discovered'] = summary_data.get('total_hosts_discovered', 0)
+                    tool_summary['open_ports'] = total_ports
+                    
+                    summary['total_vulnerabilities'] += total_vulns
+                    summary['total_findings'] += total_ports
+                    
+                    # Подсчитываем уязвимости по серьезности
+                    for severity, count in summary_data.get('vulnerabilities_by_severity', {}).items():
+                        severity_lower = severity.lower()
+                        if severity_lower in summary['by_severity']:
+                            summary['by_severity'][severity_lower] += count
+                
+                # Или процесс выше не сработал, используем уязвимости напрямую
+                elif 'vulnerabilities' in report:
+                    vulns = report.get('vulnerabilities', [])
+                    tool_summary['findings'] = len(vulns) if isinstance(vulns, list) else 0
+                    summary['total_vulnerabilities'] += tool_summary['findings']
+                    
+                    # Подсчитываем по серьезности
+                    for vuln in vulns:
+                        if isinstance(vuln, dict):
+                            severity = vuln.get('severity', 'unknown').lower()
+                            if severity in summary['by_severity']:
+                                summary['by_severity'][severity] += 1
 
             summary['tool_summaries'][tool_name] = tool_summary
 
@@ -796,6 +921,7 @@ if __name__ == "__main__":
     """
 
     # Пример 2: Создание отчета с указанием временного окна
+    scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start_time = datetime.now() - timedelta(minutes=10)
     result2 = create_combined_report_by_time(
         scan_id, start_time, method='line_by_line')

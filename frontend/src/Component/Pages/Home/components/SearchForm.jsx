@@ -8,29 +8,33 @@ const SearchForm = ({
     cancelScan, 
     activeTools,
     allowInternal,
-    setAllowInternal 
+
+    setAllowInternal,
+    language = "ru"
 }) => {
     return (
         <form className="form__search" onSubmit={handleSubmit}>
-            <label htmlFor="search-input">Поиск</label>
+            <label htmlFor="search-input">{language === "ru" ? 'Поиск' : 'Search'}</label>
             <div className="form__row">
                 <input
                     id="search-input"
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Адрес сайта (пример: https://example.com)"
-                    aria-label="Поисковый запрос"
+
+                    placeholder={language === "ru" ? "Адрес сайта (пример: https://example.com)" : "Website URL (example: https://example.com)"}
+                    aria-label={language === "ru" ? "Поисковый запрос" : "Search query"}
                     disabled={loading}
                 />
                 <div className="form-buttons">
                     <button 
                         className='form__btn' 
                         type="submit" 
-                        aria-label="Найти" 
+
+                        aria-label={language === "ru" ? "Найти" : "Start"} 
                         disabled={loading}
                     >
-                        {loading ? 'Сканирование...' : 'начать'}
+                        {loading ? (language === "ru" ? 'Сканирование...' : 'Scanning...') : (language === "ru" ? 'начать' : 'Start')}
                     </button>
                     {loading && (
                         <button 
@@ -45,16 +49,18 @@ const SearchForm = ({
                                     });
                                 }
                             }}
-                            aria-label="Отменить сканирование"
+
+                            aria-label={language === "ru" ? "Отменить сканирование" : "Cancel scan"}
                         >
-                            Отменить
+                            {language === "ru" ? 'Отменить' : 'Cancel'}
                         </button>
                     )}
                 </div>
             </div>
             {activeTools.length > 0 && (
                 <p style={{ marginTop: '8px', color: '#98a2b3', fontSize: '12px' }}>
-                    Выбранные инструменты: <strong>{activeTools.join(', ')}</strong>
+
+                    {language === "ru" ? 'Выбранные инструменты:' : 'Selected tools:'} <strong>{activeTools.join(', ')}</strong>
                 </p>
             )}
             <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -66,7 +72,10 @@ const SearchForm = ({
                     style={{ cursor: 'pointer' }}
                 />
                 <label htmlFor="allow-internal" style={{ fontSize: '12px', color: '#98a2b3', cursor: 'pointer' }}>
-                    Разрешить сканирование внутренних адресов (localhost, 127.0.0.1, private IP)
+
+                    {language === "ru" 
+                        ? 'Разрешить сканирование внутренних адресов (localhost, 127.0.0.1, private IP)' 
+                        : 'Allow scanning internal addresses (localhost, 127.0.0.1, private IP)'}
                 </label>
             </div>
         </form>

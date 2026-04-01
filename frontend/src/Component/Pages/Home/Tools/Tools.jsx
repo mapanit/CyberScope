@@ -12,7 +12,8 @@ const Tools = ({ setActiveTools, activeTools }) => {
     { id: "web", label: "Web", info: "Сканирование инструментов для веб-разведки" },
     { id: "retire", label: "Retire", info: "Сканирование JavaScript библиотек на наличие уязвимостей" },
     { id: "cors", label: "CORS", info: "Проверка конфигурации CORS на наличие уязвимостей" },
-    { id: "ssl-tls", label: "SSL/TLS", info: "Детальный анализ конфигурации SSL/TLS" },
+    { id: "dns", label: "DNS", info: "Сканирование DNS записей" },
+    { id: "nmap", label: "Nmap", info: "Сканирование портов и сервисов на целевом хосте" },
   ];
 
   const handleToolClick = (toolId) => {

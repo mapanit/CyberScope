@@ -3,11 +3,16 @@ bs4
 uvicorn
 requests
 validators
+<<<<<<< HEAD
 zaproxy
 colorama
 python-docx
 zaproxy
 censys
+=======
+colorama
+python-docx
+>>>>>>> 81533ea (+ модуль)
 PyYAML
 pyvis
 pydig
@@ -19,4 +24,9 @@ python-whois
 xmltodict
 python-dotenv
 aiohttp
+<<<<<<< HEAD
 aiogram
+=======
+aiogram
+nvdlib
+>>>>>>> 81533ea (+ модуль)

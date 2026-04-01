@@ -11,7 +11,8 @@ import { useReports } from './hooks/useReports';
 import { scanService } from './services/scanService';
 import { reportService } from './services/reportService';
 
-const Search = () => {
+
+const Search = ({ language = "ru" }) => {
     const [activeMenu, setActiveMenu] = useState(false);
     const [activeScheduleScanner, setActiveScheduleScanner] = useState(false);
     const [btn, setBtn] = useState(false);
@@ -65,16 +66,19 @@ const Search = () => {
                 setResults(data);
                 await fetchWordReports();
                 await fetchCombinedReports();
-                console.log('Сканирование завершено:', data);
+
+                console.log(language === "ru" ? 'Сканирование завершено:' : 'Scan completed:', data);
             }
 
         } catch (error) {
             if (error.name === 'AbortError') {
-                console.log('Сканирование отменено');
+
+                console.log(language === "ru" ? 'Сканирование отменено' : 'Scan cancelled');
                 return;
             }
-            console.error('Ошибка при сканировании:', error);
-            alert(`Ошибка: ${error.message}`);
+            console.error(language === "ru" ? 'Ошибка при сканировании:' : 'Scan error:', error);
+            alert(`${language === "ru" ? 'Ошибка' : 'Error'}: ${error.message}`);
+
             setResults(null);
         } finally {
             setLoading(false);
@@ -87,8 +91,9 @@ const Search = () => {
         try {
             await reportService.downloadWordReport(filename);
         } catch (error) {
-            console.error('Ошибка при скачивании отчета:', error);
-            alert('Ошибка при скачивании файла');
+
+            console.error(language === "ru" ? 'Ошибка при скачивании отчета:' : 'Error downloading report:', error);
+            alert(language === "ru" ? 'Ошибка при скачивании файла' : 'Error downloading file');
         }
     };
 
@@ -96,8 +101,9 @@ const Search = () => {
         try {
             await reportService.downloadCombinedReport(filename, reportType);
         } catch (error) {
-            console.error('Ошибка при скачивании отчета:', error);
-            alert('Ошибка при скачивании файла');
+
+            console.error(language === "ru" ? 'Ошибка при скачивании отчета:' : 'Error downloading report:', error);
+            alert(language === "ru" ? 'Ошибка при скачивании файла' : 'Error downloading file');
         }
     };
 
@@ -105,73 +111,83 @@ const Search = () => {
         try {
             await reportService.downloadTxtReport(tool, filename);
         } catch (error) {
-            console.error('Ошибка при скачивании отчета:', error);
-            alert('Ошибка при скачивании файла');
+
+            console.error(language === "ru" ? 'Ошибка при скачивании отчета:' : 'Error downloading report:', error);
+            alert(language === "ru" ? 'Ошибка при скачивании файла' : 'Error downloading file');
         }
     };
 
     const deleteWordReport = async (filename) => {
-        if (!window.confirm(`Вы уверены, что хотите удалить ${filename}?`)) {
+
+        if (!window.confirm(language === "ru" ? `Вы уверены, что хотите удалить ${filename}?` : `Are you sure you want to delete ${filename}?`)) {
             return;
         }
 
         try {
             await reportService.deleteWordReport(filename);
             await fetchWordReports();
-            alert('Отчет успешно удален');
+
+            alert(language === "ru" ? 'Отчет успешно удален' : 'Report successfully deleted');
         } catch (error) {
-            console.error('Ошибка при удалении отчета:', error);
-            alert('Ошибка при удалении файла');
+            console.error(language === "ru" ? 'Ошибка при удалении отчета:' : 'Error deleting report:', error);
+            alert(language === "ru" ? 'Ошибка при удалении файла' : 'Error deleting file');
         }
     };
 
     const deleteCombinedReport = async (filename, reportType = 'json') => {
-        if (!window.confirm(`Вы уверены, что хотите удалить ${filename}?`)) {
+
+        if (!window.confirm(language === "ru" ? `Вы уверены, что хотите удалить ${filename}?` : `Are you sure you want to delete ${filename}?`)) {
             return;
         }
 
         try {
             await reportService.deleteCombinedReport(filename, reportType);
             await fetchCombinedReports();
-            alert('Отчет успешно удален');
+
+            alert(language === "ru" ? 'Отчет успешно удален' : 'Report successfully deleted');
         } catch (error) {
-            console.error('Ошибка при удалении отчета:', error);
-            alert('Ошибка при удалении файла');
+            console.error(language === "ru" ? 'Ошибка при удалении отчета:' : 'Error deleting report:', error);
+            alert(language === "ru" ? 'Ошибка при удалении файла' : 'Error deleting file');
         }
     };
 
     const deleteTxtReport = async (tool, filename) => {
-        if (!window.confirm(`Вы уверены, что хотите удалить ${filename}?`)) {
+
+        if (!window.confirm(language === "ru" ? `Вы уверены, что хотите удалить ${filename}?` : `Are you sure you want to delete ${filename}?`)) {
             return;
         }
 
         try {
             await reportService.deleteTxtReport(tool, filename);
             await fetchTxtReports();
-            alert('Отчет успешно удален');
+
+            alert(language === "ru" ? 'Отчет успешно удален' : 'Report successfully deleted');
         } catch (error) {
-            console.error('Ошибка при удалении отчета:', error);
-            alert('Ошибка при удалении файла');
+            console.error(language === "ru" ? 'Ошибка при удалении отчета:' : 'Error deleting report:', error);
+            alert(language === "ru" ? 'Ошибка при удалении файла' : 'Error deleting file');
         }
     };
 
     const deleteAllWordReports = async () => {
-        if (!window.confirm('Вы уверены, что хотите удалить ВСЕ отчеты? Это действие необратимо!')) {
+
+        if (!window.confirm(language === "ru" ? 'Вы уверены, что хотите удалить ВСЕ отчеты? Это действие необратимо!' : 'Are you sure you want to delete ALL reports? This action is irreversible!')) {
             return;
         }
 
         try {
             await reportService.deleteAllWordReports();
             await fetchWordReports();
-            alert('Все отчеты успешно удалены');
+
+            alert(language === "ru" ? 'Все отчеты успешно удалены' : 'All reports successfully deleted');
         } catch (error) {
-            console.error('Ошибка при удалении отчетов:', error);
-            alert('Ошибка при удалении файлов');
+            console.error(language === "ru" ? 'Ошибка при удалении отчетов:' : 'Error deleting reports:', error);
+            alert(language === "ru" ? 'Ошибка при удалении файлов' : 'Error deleting files');
         }
     };
 
     const clearAllReports = async () => {
-        if (!window.confirm('Вы уверены? Это удалит ВСЕ отчеты (word, json, combined) навсегда!')) {
+
+        if (!window.confirm(language === "ru" ? 'Вы уверены? Это удалит ВСЕ отчеты (word, json, combined) навсегда!' : 'Are you sure? This will delete ALL reports (word, json, combined) permanently!')) {
             return;
         }
 
@@ -180,10 +196,11 @@ const Search = () => {
             await fetchWordReports();
             await fetchCombinedReports();
             await fetchTxtReports();
-            alert(`Успешно удалено файлов: ${data.deleted}`);
+
+            alert(language === "ru" ? `Успешно удалено файлов: ${data.deleted}` : `Successfully deleted files: ${data.deleted}`);
         } catch (error) {
-            console.error('Ошибка при очистке отчетов:', error);
-            alert('Ошибка при очистке отчетов');
+            console.error(language === "ru" ? 'Ошибка при очистке отчетов:' : 'Error clearing reports:', error);
+            alert(language === "ru" ? 'Ошибка при очистке отчетов' : 'Error clearing reports');
         }
     };
 
@@ -192,7 +209,9 @@ const Search = () => {
         if (result.error) {
             return (
                 <div className="error-message">
-                    {result.cancelled ? '⚠️ Сканирование отменено' : `Ошибка: ${result.error}`}
+                    {result.cancelled 
+                        ? (language === "ru" ? '⚠️ Сканирование отменено' : '⚠️ Scan cancelled') 
+                        : `${language === "ru" ? 'Ошибка' : 'Error'}: ${result.error}`}
                 </div>
             );
         }
@@ -204,18 +223,20 @@ const Search = () => {
         return (
             <div className="scanner-results">
                 <div className="scanner-summary">
-                    <h5>Сводка сканирования:</h5>
-                    <p><strong>Цель:</strong> {report.scan_info?.target || 'Не указано'}</p>
-                    <p><strong>Дата сканирования:</strong> {report.scan_info?.scan_date || 'Не указано'}</p>
-                    <p><strong>Всего уязвимостей:</strong> {summary.total_vulnerabilities || 0}</p>
-                    <p><strong style={{ color: '#ff4444' }}>Высокий риск:</strong> {summary.high || 0}</p>
-                    <p><strong style={{ color: '#ffaa00' }}>Средний риск:</strong> {summary.medium || 0}</p>
-                    <p><strong style={{ color: '#0099cc' }}>Низкий риск:</strong> {summary.low || 0}</p>
+
+                    <h5>{language === "ru" ? 'Сводка сканирования:' : 'Scan Summary:'}</h5>
+                    <p><strong>{language === "ru" ? 'Цель:' : 'Target:'}</strong> {report.scan_info?.target || (language === "ru" ? 'Не указано' : 'Not specified')}</p>
+                    <p><strong>{language === "ru" ? 'Дата сканирования:' : 'Scan Date:'}</strong> {report.scan_info?.scan_date || (language === "ru" ? 'Не указано' : 'Not specified')}</p>
+                    <p><strong>{language === "ru" ? 'Всего уязвимостей:' : 'Total Vulnerabilities:'}</strong> {summary.total_vulnerabilities || 0}</p>
+                    <p><strong style={{ color: '#ff4444' }}>{language === "ru" ? 'Высокий риск:' : 'High Risk:'}</strong> {summary.high || 0}</p>
+                    <p><strong style={{ color: '#ffaa00' }}>{language === "ru" ? 'Средний риск:' : 'Medium Risk:'}</strong> {summary.medium || 0}</p>
+                    <p><strong style={{ color: '#0099cc' }}>{language === "ru" ? 'Низкий риск:' : 'Low Risk:'}</strong> {summary.low || 0}</p>
                 </div>
 
                 {vulnerabilities.length > 0 ? (
                     <div className="vulnerabilities-list">
-                        <h5>Найденные уязвимости:</h5>
+
+                        <h5>{language === "ru" ? 'Найденные уязвимости:' : 'Found Vulnerabilities:'}</h5>
                         {vulnerabilities.map((vuln, index) => (
                             <div key={index} className={`vulnerability-item severity-${vuln.severity?.toLowerCase()}`}>
                                 <div className="vulnerability-header">
@@ -225,16 +246,18 @@ const Search = () => {
                                     </span>
                                 </div>
                                 <div className="vulnerability-details">
-                                    <p><strong>Описание:</strong> {vuln.details}</p>
-                                    <p><strong>Рекомендации:</strong> {vuln.recommendation}</p>
-                                    {vuln.affected_url && <p><strong>Затронутый URL:</strong> {vuln.affected_url}</p>}
+
+                                    <p><strong>{language === "ru" ? 'Описание:' : 'Description:'}</strong> {vuln.details}</p>
+                                    <p><strong>{language === "ru" ? 'Рекомендации:' : 'Recommendations:'}</strong> {vuln.recommendation}</p>
+                                    {vuln.affected_url && <p><strong>{language === "ru" ? 'Затронутый URL:' : 'Affected URL:'}</strong> {vuln.affected_url}</p>}
                                 </div>
                             </div>
                         ))}
                     </div>
                 ) : (
                     <div className="no-vulnerabilities">
-                        <p>✅ Уязвимостей не найдено!</p>
+
+                        <p>{language === "ru" ? '✅ Уязвимостей не найдено!' : '✅ No vulnerabilities found!'}</p>
                     </div>
                 )}
             </div>
@@ -250,17 +273,16 @@ const Search = () => {
             return (
                 <div className="combined-results">
                     <div className="combined-summary">
-                        <h3>📊 Объединенный отчет сканирования</h3>
+                        <h3>{language === "ru" ? '📊 Объединенный отчет сканирования' : '📊 Combined Scan Report'}</h3>
                         <div className="summary-info">
-                            <p><strong>ID сканирования:</strong> {scanId}</p>
-                            <p><strong>Целевой адрес:</strong> {results.target}</p>
-                            <p><strong>Используемых инструментов:</strong> {toolsCount}</p>
-                            <p><strong>Инструменты:</strong> {results.tools_executed?.join(', ') || 'N/A'}</p>
+                            <p><strong>{language === "ru" ? 'ID сканирования:' : 'Scan ID:'}</strong> {scanId}</p>
+                            <p><strong>{language === "ru" ? 'Целевой адрес:' : 'Target Address:'}</strong> {results.target}</p>
+                            <p><strong>{language === "ru" ? 'Используемых инструментов:' : 'Tools Used:'}</strong> {toolsCount}</p>
+                            <p><strong>{language === "ru" ? 'Инструменты:' : 'Tools:'}</strong> {results.tools_executed?.join(', ') || 'N/A'}</p>
                         </div>
-
                         {results.combined_reports && (
                             <div className="combined-reports-links" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e0e0e0' }}>
-                                <h5>Скачать отчеты:</h5>
+                                <h5>{language === "ru" ? 'Скачать отчеты:' : 'Download Reports:'}</h5>
                                 {results.combined_reports.json && (
                                     <button
                                         type="button"
@@ -282,7 +304,8 @@ const Search = () => {
                                         onMouseOver={(e) => e.target.style.backgroundColor = '#0052a3'}
                                         onMouseOut={(e) => e.target.style.backgroundColor = '#0066cc'}
                                     >
-                                        📄 Скачать JSON отчет
+
+                                        {language === "ru" ? '📄 Скачать JSON отчет' : '📄 Download JSON Report'}
                                     </button>
                                 )}
                                 {results.combined_reports.docx && (
@@ -305,7 +328,8 @@ const Search = () => {
                                         onMouseOver={(e) => e.target.style.backgroundColor = '#218838'}
                                         onMouseOut={(e) => e.target.style.backgroundColor = '#28a745'}
                                     >
-                                        📘 Скачать Word отчет
+
+                                        {language === "ru" ? '📘 Скачать Word отчет' : '📘 Download Word Report'}
                                     </button>
                                 )}
                                 {results.combined_reports.txt && (
@@ -328,7 +352,8 @@ const Search = () => {
                                         onMouseOver={(e) => e.target.style.backgroundColor = '#ea9330'}
                                         onMouseOut={(e) => e.target.style.backgroundColor = '#ea9330'}
                                     >
-                                        📘 Скачать TXT отчет
+
+                                        {language === "ru" ? '📘 Скачать TXT отчет' : '📘 Download TXT Report'}
                                     </button>
                                 )}
                             </div>
@@ -354,14 +379,15 @@ const Search = () => {
                                         ) : (
                                             <div>
                                                 {toolResult.technologies_found !== undefined && (
-                                                    <p><strong>🔍 Технологий обнаружено:</strong> {toolResult.technologies_found}</p>
+
+                                                    <p><strong>{language === "ru" ? '🔍 Технологий обнаружено:' : '🔍 Technologies Found:'}</strong> {toolResult.technologies_found}</p>
                                                 )}
                                                 {toolResult.count !== undefined && (
-                                                    <p><strong>📊 Находок:</strong> {toolResult.count}</p>
+                                                    <p><strong>{language === "ru" ? '📊 Находок:' : '📊 Findings:'}</strong> {toolResult.count}</p>
                                                 )}
                                                 {toolResult.vulnerabilities?.length > 0 && (
                                                     <div style={{ marginTop: '8px' }}>
-                                                        <p><strong>⚠️ Уязвимости:</strong> {toolResult.vulnerabilities.length}</p>
+                                                        <p><strong>{language === "ru" ? '⚠️ Уязвимости:' : '⚠️ Vulnerabilities:'}</strong> {toolResult.vulnerabilities.length}</p>
                                                         <div className="vulnerabilities-list">
                                                             {toolResult.vulnerabilities.slice(0, 3).map((vuln, idx) => (
                                                                 <div key={idx}>
@@ -382,7 +408,7 @@ const Search = () => {
                                             [toolName]: !isExpanded
                                         }))}
                                         className={`json-button ${isExpanded ? 'expanded' : ''}`}
-                                        title="Показать/скрыть JSON"
+                                        title={language === "ru" ? 'Показать/скрыть JSON' : 'Show/Hide JSON'}
                                     >
                                         {isExpanded ? '▼ JSON' : '▶ JSON'}
                                     </button>
@@ -414,7 +440,8 @@ const Search = () => {
                             onClick={() => setBtn(!btn)}
                             className={btn ? "menu__btn active" : "menu__btn"}
                         >
-                            {btn ? 'закрыть' : 'открыть'}
+
+                            {btn ? (language === "ru" ? 'закрыть' : 'close') : (language === "ru" ? 'открыть' : 'open')}
                         </button>
                         <Tools activeTools={activeTools} setActiveTools={setActiveTools} />
                     </div>
@@ -434,8 +461,10 @@ const Search = () => {
                             setQuery={setQuery}
                             allowInternal={allowInternal}
                             setAllowInternal={setAllowInternal}
+
+                            language={language}
                             onSchedule={(task) => {
-                                console.log('Запланировано сканирование:', task);
+                                console.log(language === "ru" ? 'Запланировано сканирование:' : 'Scan scheduled:', task);
                                 // Здесь можно добавить интеграцию с бэкендом
                             }}
                         />
@@ -459,6 +488,8 @@ const Search = () => {
                             activeTools={activeTools}
                             allowInternal={allowInternal}
                             setAllowInternal={setAllowInternal}
+
+                            language={language}
                         />
 
                         <ReportsPanel
@@ -481,6 +512,8 @@ const Search = () => {
                             deleteTxtReport={deleteTxtReport}
                             deleteAllWordReports={deleteAllWordReports}
                             clearAllReports={clearAllReports}
+
+                            language={language}
                         />
                     </div>
 
@@ -491,6 +524,8 @@ const Search = () => {
                         setExpandedJsonTools={setExpandedJsonTools}
                         renderScannerResults={renderScannerResults}
                         renderCombinedResults={renderCombinedResults}
+
+                        language={language}
                     />
                 </div>
             </div>

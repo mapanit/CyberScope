@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './ScheduleScanner.scss';
 
-const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, activeTools, setActiveTools, query, setQuery, allowInternal, setAllowInternal, onSchedule }) => {
+const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, activeTools, setActiveTools, query, setQuery, allowInternal, setAllowInternal, onSchedule, language = "ru" }) => {
   const [scheduleType, setScheduleType] = useState('once');
   const [scheduleTime, setScheduleTime] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
@@ -10,7 +10,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   const [scheduledTasks, setScheduledTasks] = useState([]);
   const [viewMode, setViewMode] = useState('create'); // 'create' or 'list'
   
-  const weekDays = [
+  const weekDays = language === "ru" ? [
     { id: '0', name: 'Вс' },
     { id: '1', name: 'Пн' },
     { id: '2', name: 'Вт' },
@@ -18,6 +18,14 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     { id: '4', name: 'Чт' },
     { id: '5', name: 'Пт' },
     { id: '6', name: 'Сб' }
+  ] : [
+    { id: '0', name: 'Sun' },
+    { id: '1', name: 'Mon' },
+    { id: '2', name: 'Tue' },
+    { id: '3', name: 'Wed' },
+    { id: '4', name: 'Thu' },
+    { id: '5', name: 'Fri' },
+    { id: '6', name: 'Sat' }
   ];
 
   const toolsList = [
@@ -112,40 +120,40 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   // Добавление задачи
   const addSchedule = () => {
     if (!query.trim()) {
-      alert('Пожалуйста, введите цель сканирования');
+      alert(language === "ru" ? 'Пожалуйста, введите цель сканирования' : 'Please enter the scan target');
       return;
     }
 
     if (!scheduleTime) {
-      alert('Пожалуйста, выберите время');
+      alert(language === "ru" ? 'Пожалуйста, выберите время' : 'Please select a time');
       return;
     }
 
     if (scheduleType === 'once' && !scheduleDate) {
-      alert('Пожалуйста, выберите дату');
+      alert(language === "ru" ? 'Пожалуйста, выберите дату' : 'Please select a date');
       return;
     }
 
     if (scheduleType === 'weekly' && scheduleDays.length === 0) {
-      alert('Пожалуйста, выберите дни недели');
+      alert(language === "ru" ? 'Пожалуйста, выберите дни недели' : 'Please select days of the week');
       return;
     }
 
     if (activeTools.length === 0) {
-      alert('Пожалуйста, выберите хотя бы один инструмент');
+      alert(language === "ru" ? 'Пожалуйста, выберите хотя бы один инструмент' : 'Please select at least one tool');
       return;
     }
 
     const nextRun = calculateNextRun();
     
     if (!nextRun) {
-      alert('Пожалуйста, заполните все обязательные поля');
+      alert(language === "ru" ? 'Пожалуйста, заполните все обязательные поля' : 'Please complete all required fields');
       return;
     }
 
     const now = new Date();
     if (nextRun <= now && scheduleType === 'once') {
-      alert('Время сканирования должно быть в будущем');
+      alert(language === "ru" ? 'Время сканирования должно быть в будущем' : 'Scan time must be in the future');
       return;
     }
 
@@ -172,7 +180,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
       onSchedule(newTask);
     }
 
-    alert('✅ Сканирование успешно запланировано!');
+    alert(language === "ru" ? '✅ Сканирование успешно запланировано!' : '✅ Scan successfully scheduled!');
     
     // Сброс формы
     setScheduleType('once');
@@ -184,7 +192,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
   // Удаление задачи
   const deleteTask = (taskId) => {
-    if (window.confirm('Вы уверены, что хотите удалить это запланированное сканирование?')) {
+    if (window.confirm(language === "ru" ? 'Вы уверены, что хотите удалить это запланированное сканирование?' : 'Are you sure you want to delete this scheduled scan?')) {
       const updatedTasks = scheduledTasks.filter(task => task.id !== taskId);
       saveTasks(updatedTasks);
     }
@@ -208,7 +216,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   // Форматирование даты
   const formatNextRun = (nextRun) => {
     const date = new Date(nextRun);
-    return date.toLocaleString('ru-RU', {
+    return date.toLocaleString(language === "ru" ? 'ru-RU' : 'en-US', {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',
@@ -220,14 +228,17 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   const getScheduleText = (task) => {
     switch (task.type) {
       case 'once':
-        return `Однократно ${new Date(task.date).toLocaleDateString('ru-RU')}`;
+        const dateStr = language === "ru" 
+          ? new Date(task.date).toLocaleDateString('ru-RU')
+          : new Date(task.date).toLocaleDateString('en-US');
+        return `${language === "ru" ? 'Однократно' : 'Once'} ${dateStr}`;
       case 'daily':
-        return `Ежедневно в ${task.time}`;
+        return `${language === "ru" ? 'Ежедневно' : 'Daily'} в ${task.time}`;
       case 'weekly':
         const days = task.days.map(d => weekDays.find(w => w.id === d)?.name).join(', ');
-        return `Еженедельно (${days}) в ${task.time}`;
+        return `${language === "ru" ? 'Еженедельно' : 'Weekly'} (${days}) в ${task.time}`;
       case 'monthly':
-        return `Ежемесячно ${task.monthDay}-го числа в ${task.time}`;
+        return `${language === "ru" ? 'Ежемесячно' : 'Monthly'} ${task.monthDay}-${language === "ru" ? 'го числа' : ''} в ${task.time}`;
       default:
         return '';
     }
@@ -247,7 +258,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   return (
     <div className="schedule__scanner-menu active">
       <div className="schedule-header">
-        <h3>📅 Планировщик</h3>
+        <h3>📅 {language === "ru" ? 'Планировщик' : 'Scheduler'}</h3>
         <button 
           className="close-btn"
           onClick={() => setActiveScheduleScanner(false)}
@@ -261,13 +272,13 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
           className={viewMode === 'create' ? 'active' : ''}
           onClick={() => setViewMode('create')}
         >
-          ➕ Создать
+          {language === "ru" ? '➕ Создать' : '➕ Create'}
         </button>
         <button 
           className={viewMode === 'list' ? 'active' : ''}
           onClick={() => setViewMode('list')}
         >
-          📋 Задачи ({scheduledTasks.length})
+          {language === "ru" ? '📋 Задачи' : '📋 Tasks'} ({scheduledTasks.length})
         </button>
       </div>
 
@@ -275,7 +286,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
         <div className="schedule-form">
           {/* Цель сканирования */}
           <div className="form-group">
-            <label>🎯 Цель</label>
+            <label>🎯 {language === "ru" ? 'Цель' : 'Target'}</label>
             <input
               type="text"
               value={query}
@@ -287,31 +298,31 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
           {/* Тип расписания */}
           <div className="form-group">
-            <label>🔄 Периодичность</label>
+            <label>🔄 {language === "ru" ? 'Периодичность' : 'Frequency'}</label>
             <div className="schedule-type-buttons">
               <button 
                 className={scheduleType === 'once' ? 'active' : ''}
                 onClick={() => setScheduleType('once')}
               >
-                Однократно
+                {language === "ru" ? 'Однократно' : 'Once'}
               </button>
               <button 
                 className={scheduleType === 'daily' ? 'active' : ''}
                 onClick={() => setScheduleType('daily')}
               >
-                Ежедневно
+                {language === "ru" ? 'Ежедневно' : 'Daily'}
               </button>
               <button 
                 className={scheduleType === 'weekly' ? 'active' : ''}
                 onClick={() => setScheduleType('weekly')}
               >
-                Еженедельно
+                {language === "ru" ? 'Еженедельно' : 'Weekly'}
               </button>
               <button 
                 className={scheduleType === 'monthly' ? 'active' : ''}
                 onClick={() => setScheduleType('monthly')}
               >
-                Ежемесячно
+                {language === "ru" ? 'Ежемесячно' : 'Monthly'}
               </button>
             </div>
           </div>
@@ -319,7 +330,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
           {/* Дата и время */}
           <div className="form-row">
             <div className="form-group">
-              <label>⏰ Время</label>
+              <label>⏰ {language === "ru" ? 'Время' : 'Time'}</label>
               <input
                 type="time"
                 value={scheduleTime}
@@ -330,7 +341,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
             {scheduleType === 'once' && (
               <div className="form-group">
-                <label>📅 Дата</label>
+                <label>📅 {language === "ru" ? 'Дата' : 'Date'}</label>
                 <input
                   type="date"
                   value={scheduleDate}
@@ -343,7 +354,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
             {scheduleType === 'monthly' && (
               <div className="form-group">
-                <label>📅 День</label>
+                <label>📅 {language === "ru" ? 'День' : 'Day'}</label>
                 <select 
                   value={scheduleMonthDay} 
                   onChange={(e) => setScheduleMonthDay(parseInt(e.target.value))}
@@ -360,7 +371,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
           {/* Дни недели */}
           {scheduleType === 'weekly' && (
             <div className="form-group">
-              <label>📆 Дни недели</label>
+              <label>📆 {language === "ru" ? 'Дни недели' : 'Days of Week'}</label>
               <div className="weekdays-buttons">
                 {weekDays.map(day => (
                   <button
@@ -377,7 +388,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
           {/* Инструменты */}
           <div className="form-group">
-            <label>🛠️ Инструменты</label>
+            <label>🛠️ {language === "ru" ? 'Инструменты' : 'Tools'}</label>
             <div className="tools-selector">
               {toolsList.map(tool => (
                 <button
@@ -406,22 +417,22 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
                 checked={allowInternal}
                 onChange={(e) => setAllowInternal(e.target.checked)}
               />
-              <span>Разрешить внутренние адреса</span>
+              <span>{language === "ru" ? 'Разрешить внутренние адреса' : 'Allow internal addresses'}</span>
             </label>
           </div>
 
           {/* Кнопка */}
           <button className="schedule-submit-btn" onClick={addSchedule}>
-            📅 Запланировать
+            📅 {language === "ru" ? 'Запланировать' : 'Schedule'}
           </button>
         </div>
       ) : (
         <div className="scheduled-tasks-list">
           {scheduledTasks.length === 0 ? (
             <div className="empty-tasks">
-              <p>📭 Нет запланированных задач</p>
+              <p>📭 {language === "ru" ? 'Нет запланированных задач' : 'No scheduled tasks'}</p>
               <button onClick={() => setViewMode('create')}>
-                Создать задачу
+                {language === "ru" ? 'Создать задачу' : 'Create Task'}
               </button>
             </div>
           ) : (
@@ -436,14 +447,14 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
                     <button 
                       className="edit-task-btn"
                       onClick={() => editTask(task)}
-                      title="Редактировать"
+                      title={language === "ru" ? "Редактировать" : "Edit"}
                     >
                       ✏️
                     </button>
                     <button 
                       className="delete-task-btn"
                       onClick={() => deleteTask(task.id)}
-                      title="Удалить"
+                      title={language === "ru" ? "Удалить" : "Delete"}
                     >
                       🗑️
                     </button>
@@ -457,7 +468,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
                   </div>
                   <div className="task-next-run">
                     <span className="next-icon">⏰</span>
-                    <span>Следующий: {formatNextRun(task.nextRun)}</span>
+                    <span>{language === "ru" ? 'Следующий' : 'Next'}: {formatNextRun(task.nextRun)}</span>
                   </div>
                   <div className="task-tools">
                     <span className="tools-icon">🛠️</span>
