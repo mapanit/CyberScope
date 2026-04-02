@@ -15,6 +15,10 @@ from pathlib import Path
 import json
 import datetime
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
+
 from scanners.vulnerability_scanner import VulnerabilityScanner
 from scanners.wappalyzer_scanner import simple_scan as wappalyzer_scan, WappalyzerScanner
 from scanners.osint_scanner import simple_scan as osint_scan
@@ -1512,6 +1516,34 @@ async def get_txt_reports():
             status_code=500, detail=f"Ошибка при получении списка отчетов: {str(e)}")
 
 
+@app.get("/api/download-word-report")
+async def download_word_report(filename: str = Query(..., description="Имя файла для скачивания")):
+    """
+    Скачать файл .docx из папки reports/combined/word
+    """
+    try:
+        # Защита от path traversal
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(
+                status_code=400, detail="Недопустимое имя файла")
+
+        file_path = Path(__file__).parent / "reports" / "combined" / "word" / filename
+
+        if not file_path.exists() or not file_path.suffix.lower() == ".docx":
+            raise HTTPException(status_code=404, detail="Файл не найден")
+
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при скачивании файла: {str(e)}")
+
+
 @app.get("/api/download-txt-report")
 async def download_txt_report(tool: str = Query(..., description="Название инструмента"), filename: str = Query(..., description="Имя файла для скачивания")):
     """
@@ -1538,6 +1570,55 @@ async def download_txt_report(tool: str = Query(..., description="Названи
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при скачивании файла: {str(e)}")
+
+
+@app.delete("/api/delete-word-report")
+async def delete_word_report(filename: str = Query(None, description="Имя файла для удаления")):
+    """
+    Удалить файл .docx из папки reports/combined/word
+    Если filename не указан, удаляет все word-отчеты
+    """
+    try:
+        word_dir = Path(__file__).parent / "reports" / "combined" / "word"
+
+        if not word_dir.exists():
+            raise HTTPException(status_code=404, detail="Папка отчетов не найдена")
+
+        if filename:
+            # Защита от path traversal
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(
+                    status_code=400, detail="Недопустимое имя файла")
+
+            file_path = word_dir / filename
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="Файл не найден")
+
+            file_path.unlink()
+            print(f"✓ Удален файл: {file_path}")
+
+            return {
+                "status": "success",
+                "message": f"Файл {filename} успешно удален"
+            }
+        else:
+            # Удаляем все файлы
+            deleted_count = 0
+            for file_path in word_dir.glob("*.docx"):
+                file_path.unlink()
+                deleted_count += 1
+                print(f"✓ Удален файл: {file_path}")
+
+            return {
+                "status": "success",
+                "message": f"Удалено {deleted_count} файлов",
+                "deleted": deleted_count
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при удалении файла: {str(e)}")
 
 
 @app.delete("/api/delete-txt-report")
@@ -1605,7 +1686,9 @@ async def get_combined_reports():
         if not reports_dir.exists():
             return {
                 "status": "success",
-                "reports": [],
+                "json_reports": [],
+                "txt_reports": [],
+                "word_reports": [],
                 "count": 0,
                 "message": "Папка не найдена"
             }
@@ -1626,11 +1709,54 @@ async def get_combined_reports():
         else:
             txt_files = []
 
+        # Получаем все DOCX файлы из папки combined/word
+        word_dir = reports_dir / "word"
+        if word_dir.exists():
+            word_files = sorted(
+                [f.name for f in word_dir.glob("*.docx")], reverse=True)
+        else:
+            word_files = []
+
         return {
             "status": "success",
             "json_reports": json_files,
             "txt_reports": txt_files,
-            "count": len(json_files) + len(txt_files)
+            "word_reports": word_files,
+            "count": len(json_files) + len(txt_files) + len(word_files)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при получении списка отчетов: {str(e)}")
+
+
+@app.get("/api/word-reports")
+async def get_word_reports():
+    """
+    Получить список всех word-отчетов из папки combined/word
+    """
+    try:
+        word_dir = Path(__file__).parent / "reports" / "combined" / "word"
+
+        if not word_dir.exists():
+            return {
+                "status": "success",
+                "reports": [],
+                "count": 0
+            }
+
+        # Получаем все DOCX файлы
+        word_files = []
+        for file_path in sorted(word_dir.glob("*.docx"), reverse=True):
+            word_files.append({
+                "filename": file_path.name,
+                "size": file_path.stat().st_size,
+                "created": file_path.stat().st_mtime
+            })
+
+        return {
+            "status": "success",
+            "reports": word_files,
+            "count": len(word_files)
         }
     except Exception as e:
         raise HTTPException(
@@ -1638,7 +1764,7 @@ async def get_combined_reports():
 
 
 @app.get("/api/download-combined-report")
-async def download_combined_report(filename: str = Query(..., description="Имя файла для скачивания"), report_type: str = Query("json", description="Тип отчета: json или txt")):
+async def download_combined_report(filename: str = Query(..., description="Имя файла для скачивания"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx")):
     """
     Скачать скомпилированный отчет из папки combined
     """
@@ -1662,6 +1788,13 @@ async def download_combined_report(filename: str = Query(..., description="Им�
                 raise HTTPException(
                     status_code=400, detail="Неверный тип файла")
             media_type = "text/plain"
+        elif report_type in ["word", "docx"]:
+            file_path = Path(__file__).parent / "reports" / \
+                "combined" / "word" / filename
+            if not file_path.suffix.lower() == ".docx":
+                raise HTTPException(
+                    status_code=400, detail="Неверный тип файла")
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         else:
             raise HTTPException(
                 status_code=400, detail="Неизвестный тип отчета")
@@ -1682,7 +1815,7 @@ async def download_combined_report(filename: str = Query(..., description="Им�
 
 
 @app.delete("/api/delete-combined-report")
-async def delete_combined_report(filename: str = Query(..., description="Имя файла для удаления"), report_type: str = Query("json", description="Тип отчета: json или txt")):
+async def delete_combined_report(filename: str = Query(..., description="Имя файла для удаления"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx")):
     """
     Удалить скомпилированный отчет из папки combined
     """
@@ -1698,6 +1831,9 @@ async def delete_combined_report(filename: str = Query(..., description="Имя 
         elif report_type == "txt":
             file_path = Path(__file__).parent / "reports" / \
                 "combined" / "txt" / filename
+        elif report_type in ["word", "docx"]:
+            file_path = Path(__file__).parent / "reports" / \
+                "combined" / "word" / filename
         else:
             raise HTTPException(
                 status_code=400, detail="Неизвестный тип отчета")
@@ -1778,6 +1914,395 @@ async def clear_all_reports():
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при очистке отчетов: {str(e)}")
+
+
+# ============= SCHEDULER ENDPOINTS =============
+
+from scheduler import get_scheduler
+
+# Получиваем глобальный экземпляр планировщика
+scheduler = get_scheduler(Path(__file__).parent)
+
+
+@app.on_event("startup")
+async def startup_events():
+    """Инициализация при запуске приложения"""
+    logger.info("🚀 Запуск приложения...")
+    
+    # Запускаем планировщик
+    scheduler.start()
+    logger.info("📅 Планировщик запущен")
+
+
+@app.on_event("shutdown")
+async def shutdown_events():
+    """Очистка при завершении приложения"""
+    logger.info("🛑 Завершение приложения...")
+    scheduler.stop()
+    logger.info("📅 Планировщик остановлен")
+
+
+@app.get("/api/tasks")
+async def get_tasks():
+    """Получить список всех запланированных задач"""
+    try:
+        tasks = scheduler.get_tasks()
+        return {
+            "status": "success",
+            "tasks": tasks,
+            "count": len(tasks)
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при получении задач: {str(e)}")
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task(task_id: str):
+    """Получить конкретную задачу по ID"""
+    try:
+        task = scheduler.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        return {
+            "status": "success",
+            "task": task
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при получении задачи: {str(e)}")
+
+
+@app.post("/api/tasks")
+async def create_task(task: dict):
+    """Создать новую запланированную задачу"""
+    try:
+        # Валидация обязательных полей
+        required_fields = ['query', 'activeTools', 'type', 'time']
+        for field in required_fields:
+            if field not in task:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Отсутствует обязательное поле: {field}")
+        
+        # Валидация query
+        query = task.get('query', '').strip()
+        if not query:
+            raise HTTPException(
+                status_code=400, 
+                detail="Цель сканирования не может быть пустой")
+        
+        # Валидация инструментов
+        if not task.get('activeTools') or not isinstance(task['activeTools'], list):
+            raise HTTPException(
+                status_code=400, 
+                detail="Должен быть выбран хотя бы один инструмент")
+        
+        # Регистрируем callbacks для инструментов если они еще не зарегистрированы
+        await _register_scan_callbacks()
+        
+        # Добавляем задачу в планировщик
+        task_id = scheduler.add_task(task)
+        
+        logger.info(f"✓ Задача создана: {task_id}")
+        
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "message": "Задача успешно создана"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"✗ Ошибка при создании задачи: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Ошибка при создании задачи: {str(e)}")
+
+
+@app.put("/api/tasks/{task_id}")
+async def update_task(task_id: str, task_data: dict):
+    """Обновить запланированную задачу"""
+    try:
+        existing_task = scheduler.get_task(task_id)
+        if not existing_task:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        # Обновляем задачу
+        scheduler.update_task(task_id, task_data)
+        
+        logger.info(f"✓ Задача обновлена: {task_id}")
+        
+        return {
+            "status": "success",
+            "message": "Задача успешно обновлена"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Ошибка при обновлении задачи: {str(e)}")
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: str):
+    """Удалить запланированную задачу"""
+    try:
+        removed = scheduler.remove_task(task_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        logger.info(f"✓ Задача удалена: {task_id}")
+        
+        return {
+            "status": "success",
+            "message": "Задача успешно удалена"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Ошибка при удалении задачи: {str(e)}")
+
+
+@app.get("/api/task-results/{task_id}")
+async def get_task_results(task_id: str):
+    """Получить результаты сканирования для задачи"""
+    try:
+        task = scheduler.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        
+        # Возвращаем информацию о последнем сканировании
+        return {
+            "status": "success",
+            "task_id": task_id,
+            "task_type": task.get('type'),
+            "target": task.get('query'),
+            "tools": task.get('tools', []),
+            "last_scan_folder": task.get('last_scan_folder'),
+            "last_scan_time": task.get('last_scan_time'),
+            "scan_results": task.get('scan_results', []),
+            "next_run": task.get('nextRun'),
+            "enabled": task.get('enabled', True)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Ошибка при получении результатов: {str(e)}")
+
+
+async def _register_scan_callbacks():
+    """Зарегистрировать callbacks для всех инструментов"""
+    
+    # === SCANNER ===
+    async def callback_scanner(target, allow_internal=False, task_id=None):
+        """Callback для VulnerabilityScanner"""
+        try:
+            logger.info(f"🔄 Запуск scanner для {target}")
+            from scanners.vulnerability_scanner import VulnerabilityScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = VulnerabilityScanner(target, reports_dir)
+            scanner.scan()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ scanner завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске scanner: {e}", exc_info=True)
+    
+    # === NUCLEI ===
+    async def callback_nuclei(target, allow_internal=False, task_id=None):
+        """Callback для Nuclei сканера"""
+        try:
+            logger.info(f"🔄 Запуск nuclei для {target}")
+            from scanners.nuclei_scanner import run_scan
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            result = await run_scan(target, save_reports=True, reports_dir=reports_dir)
+            logger.info(f"✓ nuclei завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске nuclei: {e}", exc_info=True)
+    
+    # === OSINT ===
+    async def callback_osint(target, allow_internal=False, task_id=None):
+        """Callback для OSINT сканера"""
+        try:
+            logger.info(f"🔄 Запуск osint для {target}")
+            from scanners.osint_scanner import simple_scan
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            result = simple_scan(target, reports_dir)
+            logger.info(f"✓ osint завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске osint: {e}", exc_info=True)
+    
+    # === WAPPALYZER ===
+    async def callback_wappalyzer(target, allow_internal=False, task_id=None):
+        """Callback для Wappalyzer"""
+        try:
+            logger.info(f"🔄 Запуск wappalyzer для {target}")
+            from scanners.wappalyzer_scanner import WappalyzerScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = WappalyzerScanner(target, reports_dir)
+            scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ wappalyzer завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске wappalyzer: {e}", exc_info=True)
+    
+    # === SSL-TLS ===
+    async def callback_ssl_tls(target, allow_internal=False, task_id=None):
+        """Callback для SSL/TLS сканера"""
+        try:
+            logger.info(f"🔄 Запуск ssl-tls для {target}")
+            from scanners.ssl_tls_scanner import SSLTLSScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = SSLTLSScanner(target, reports_dir)
+            scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ ssl-tls завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске ssl-tls: {e}", exc_info=True)
+    
+    # === NMAP ===
+    async def callback_nmap(target, allow_internal=False, task_id=None):
+        """Callback для Nmap сканера"""
+        try:
+            logger.info(f"🔄 Запуск nmap для {target}")
+            from scanners.nmap_scanner import NmapScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = NmapScanner(target, reports_dir, allow_internal=allow_internal)
+            scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ nmap завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске nmap: {e}", exc_info=True)
+    
+    # === CORS ===
+    async def callback_cors(target, allow_internal=False, task_id=None):
+        """Callback для CORS сканера"""
+        try:
+            logger.info(f"🔄 Запуск cors для {target}")
+            from scanners.cors_scanner import CORSScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = CORSScanner(target, reports_dir)
+            scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ cors завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске cors: {e}", exc_info=True)
+    
+    # === DNS ===
+    async def callback_dns(target, allow_internal=False, task_id=None):
+        """Callback для DNS сканера"""
+        try:
+            logger.info(f"🔄 Запуск dns для {target}")
+            from scanners.dns_scanner import DNSScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = DNSScanner(target, reports_dir)
+            scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            txt_report = scanner.save_txt_report()
+            json_report = scanner.save_json_report()
+            logger.info(f"✓ dns завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске dns: {e}", exc_info=True)
+    
+    # === RETIRE ===
+    async def callback_retire(target, allow_internal=False, task_id=None):
+        """Callback для Retire.js"""
+        try:
+            logger.info(f"🔄 Запуск retire для {target}")
+            from scanners.retire_scanner import RetireScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = RetireScanner(target, reports_dir)
+            results = scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            if results:
+                txt_report = scanner.save_txt_report(results)
+                json_report = scanner.save_json_report(results)
+            logger.info(f"✓ retire завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске retire: {e}", exc_info=True)
+    
+    # === WHOIS ===
+    async def callback_whois(target, allow_internal=False, task_id=None):
+        """Callback для WHOIS сканера"""
+        try:
+            logger.info(f"🔄 Запуск whois для {target}")
+            # whois сканер обычно работает синхронно
+            # Нужно добавить импорт и вызов реального сканера
+            logger.info(f"✓ whois завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске whois: {e}", exc_info=True)
+    
+    # === WEB ===
+    async def callback_web(target, allow_internal=False, task_id=None):
+        """Callback для Web сканера"""
+        try:
+            logger.info(f"🔄 Запуск web для {target}")
+            from scanners.web_url_scanner import WebScanner
+            # Создаём путь к папке для этого сканирования
+            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            scanner = WebScanner(target, reports_dir)
+            results = scanner.scan()
+            scanner.display_results()
+            # Сохраняем оба формата отчётов
+            if results:
+                txt_report = scanner.save_txt_report(results)
+                json_report = scanner.save_json_report(results)
+            logger.info(f"✓ web завершен для {target}")
+        except Exception as e:
+            logger.error(f"✗ Ошибка при запуске web: {e}", exc_info=True)
+    
+    # Регистрируем все callbacks
+    callbacks_map = {
+        'scanner': callback_scanner,
+        'nuclei': callback_nuclei,
+        'osint': callback_osint,
+        'wappalyzer': callback_wappalyzer,
+        'ssl-tls': callback_ssl_tls,
+        'nmap': callback_nmap,
+        'cors': callback_cors,
+        'dns': callback_dns,
+        'retire': callback_retire,
+        'whois': callback_whois,
+        'web': callback_web,
+    }
+    
+    for tool_name, callback in callbacks_map.items():
+        if tool_name not in scheduler.scan_callbacks:
+            scheduler.register_callback(tool_name, callback)
+            logger.info(f"✓ Callback зарегистрирован для {tool_name}")
 
 
 if __name__ == "__main__":

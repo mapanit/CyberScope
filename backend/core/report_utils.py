@@ -17,6 +17,14 @@ try:
 except ImportError:
     NVDLIB_AVAILABLE = False
 
+try:
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
 
 class ReportBase(ABC):
     """Базовый класс для создания отчетов"""
@@ -100,9 +108,10 @@ class CombinedReport:
         self.combined_dir = reports_base_dir / "combined"
         self.json_dir = self.combined_dir / "json"
         self.txt_dir = self.combined_dir / "txt"
+        self.word_dir = self.combined_dir / "word"
 
         # Создаем директории
-        for directory in [self.json_dir, self.txt_dir]:
+        for directory in [self.json_dir, self.txt_dir, self.word_dir]:
             directory.mkdir(parents=True, exist_ok=True)
 
         self.filename_base = f"combined_report_{scan_id}"
@@ -784,6 +793,91 @@ class CombinedReport:
         else:
             return self.merge_txt_reports_with_structure()
 
+    def txt_to_docx(self, txt_file_path: Optional[str] = None, output_path: Optional[Path] = None) -> str:
+        """
+        Преобразовать TXT отчет в DOCX (Word)
+
+        Args:
+            txt_file_path: Путь к TXT файлу (если None, используется последний созданный)
+            output_path: Путь к выходному DOCX файлу
+
+        Returns:
+            str: Путь к созданному DOCX файлу
+        """
+        if not DOCX_AVAILABLE:
+            print("[!] Модуль python-docx не установлен. Установите: pip install python-docx")
+            return ""
+
+        # Определяем путь к TXT файлу
+        if txt_file_path is None:
+            txt_file_path = self.txt_dir / f"{self.filename_base}.txt"
+        else:
+            txt_file_path = Path(txt_file_path)
+
+        if not txt_file_path.exists():
+            print(f"[!] TXT файл не найден: {txt_file_path}")
+            return ""
+
+        # Определяем путь к выходному файлу
+        if output_path is None:
+            output_path = self.word_dir / f"{self.filename_base}.docx"
+        else:
+            output_path = Path(output_path)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            doc = Document()
+
+            # Читаем TXT файл и преобразуем в DOCX
+            with open(txt_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Парсим содержимое и добавляем в документ
+            _parse_and_add_to_docx(doc, content)
+
+            # Сохраняем документ
+            doc.save(str(output_path))
+            print(f"[+] DOCX отчет сохранен: {output_path}")
+            return str(output_path)
+
+        except Exception as e:
+            print(f"[!] Ошибка при преобразовании в DOCX: {e}")
+            return ""
+
+    def collect_and_merge_recent_with_docx(self, recent_minutes: int = 5, method: str = 'line_by_line', 
+                                           include_docx: bool = True) -> Dict[str, str]:
+        """
+        Собрать недавние файлы, объединить их и создать DOCX отчет
+
+        Args:
+            recent_minutes: Количество минут для поиска недавних отчетов
+            method: Метод объединения TXT ('line_by_line' или 'structured')
+            include_docx: Создать ли DOCX версию отчета
+
+        Returns:
+            Dict с путями к JSON, TXT и DOCX отчетам
+        """
+        # Собираем недавние файлы
+        self.collect_recent_files(recent_minutes=recent_minutes)
+
+        # Сохраняем JSON
+        json_path = self.save_json()
+
+        # Сохраняем TXT
+        txt_path = self.save_txt(method=method)
+
+        # Сохраняем DOCX
+        docx_path = ""
+        if include_docx:
+            docx_path = self.txt_to_docx(txt_path)
+
+        return {
+            'json': json_path,
+            'txt': txt_path,
+            'docx': docx_path
+        }
+
     def collect_and_merge_recent(self, recent_minutes: int = 5, method: str = 'line_by_line') -> Dict[str, str]:
         """
         Собрать недавние файлы и объединить их в один отчет
@@ -840,7 +934,8 @@ class CombinedReport:
 
 
 def create_combined_report(scan_id: str, reports_base_dir: Optional[Path] = None,
-                           recent_minutes: int = 5, method: str = 'line_by_line') -> Dict[str, str]:
+                           recent_minutes: int = 5, method: str = 'line_by_line',
+                           include_docx: bool = True) -> Dict[str, str]:
     """
     Создать объединённый отчет из недавно созданных отчетов инструментов
 
@@ -849,18 +944,25 @@ def create_combined_report(scan_id: str, reports_base_dir: Optional[Path] = None
         reports_base_dir: Базовая директория для отчетов
         recent_minutes: Количество минут для поиска недавних отчетов (по умолчанию 5)
         method: Метод объединения TXT ('line_by_line' или 'structured')
+        include_docx: Создать ли DOCX версию отчета
 
     Returns:
-        Dict с путями к JSON и TXT отчетам
+        Dict с путями к JSON, TXT и DOCX отчетам
     """
     combined = CombinedReport(scan_id, reports_base_dir)
-    return combined.collect_and_merge_recent(recent_minutes=recent_minutes, method=method)
+    if include_docx:
+        return combined.collect_and_merge_recent_with_docx(recent_minutes=recent_minutes, method=method)
+    else:
+        result = combined.collect_and_merge_recent(recent_minutes=recent_minutes, method=method)
+        result['docx'] = ""
+        return result
 
 
 def create_combined_report_by_time(scan_id: str, start_time: datetime,
                                    end_time: Optional[datetime] = None,
                                    reports_base_dir: Optional[Path] = None,
-                                   method: str = 'line_by_line') -> Dict[str, str]:
+                                   method: str = 'line_by_line',
+                                   include_docx: bool = True) -> Dict[str, str]:
     """
     Создать объединённый отчет из отчетов, созданных в указанном временном окне
 
@@ -870,25 +972,41 @@ def create_combined_report_by_time(scan_id: str, start_time: datetime,
         end_time: Конец временного окна (если None, используется текущее время)
         reports_base_dir: Базовая директория для отчетов
         method: Метод объединения TXT
+        include_docx: Создать ли DOCX версию отчета
 
     Returns:
-        Dict с путями к JSON и TXT отчетам
+        Dict с путями к JSON, TXT и DOCX отчетам
     """
     combined = CombinedReport(scan_id, reports_base_dir)
-    return combined.collect_and_merge_by_time_window(start_time, end_time, method)
+    combined.collect_files_by_time_window(start_time=start_time, end_time=end_time)
+
+    json_path = combined.save_json()
+    txt_path = combined.save_txt(method=method)
+    docx_path = ""
+    
+    if include_docx:
+        docx_path = combined.txt_to_docx(txt_path)
+
+    return {
+        'json': json_path,
+        'txt': txt_path,
+        'docx': docx_path
+    }
 
 
 def quick_merge_all_reports(reports_base_dir: Optional[Path] = None,
-                            output_name: str = "merged_report") -> Dict[str, str]:
+                            output_name: str = "merged_report",
+                            include_docx: bool = True) -> Dict[str, str]:
     """
     Быстрое объединение всех отчетов (без ограничений по времени)
 
     Args:
         reports_base_dir: Базовая директория отчетов
         output_name: Имя выходного файла (без расширения)
+        include_docx: Создать ли DOCX версию отчета
 
     Returns:
-        Dict с путями к JSON и TXT отчетам
+        Dict с путями к JSON, TXT и DOCX отчетам
     """
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     combined = CombinedReport(scan_id, reports_base_dir)
@@ -901,38 +1019,152 @@ def quick_merge_all_reports(reports_base_dir: Optional[Path] = None,
 
     json_path = combined.save_json()
     txt_path = combined.save_txt(method='line_by_line')
+    docx_path = ""
+    
+    if include_docx:
+        docx_path = combined.txt_to_docx(txt_path)
 
     return {
         'json': json_path,
-        'txt': txt_path
+        'txt': txt_path,
+        'docx': docx_path
     }
 
 
+def _parse_and_add_to_docx(doc: 'Document', content: str) -> None:
+    """
+    Парсить TXT содержимое и добавить его в DOCX документ с форматированием
+
+    Args:
+        doc: Document объект из python-docx
+        content: Текстовое содержимое для добавления
+    """
+    lines = content.split('\n')
+
+    for line in lines:
+        if not line.strip():
+            # Пустая строка
+            doc.add_paragraph()
+            continue
+
+        # Определяем тип строки и добавляем с соответствующим форматированием
+        if '╔' in line or '═' in line or '║' in line or '╚' in line:
+            # Это линии разделители - пропускаем (будут пустые строки)
+            continue
+        elif line.startswith('ОБЪЕДИНЕННЫЙ ОТЧЕТ') or line.startswith('ИНФОРМАЦИЯ О СКАНИРОВАНИИ') or \
+             line.startswith('ИТОГОВАЯ СТАТИСТИКА') or line.startswith('ИНСТРУМЕНТ'):
+            # Заголовки разделов
+            p = doc.add_paragraph(line.strip())
+            p.style = 'Heading 1'
+            p_format = p.paragraph_format
+            p_format.space_before = Pt(12)
+            p_format.space_after = Pt(6)
+        elif line.startswith('🔧') or line.startswith('📋') or line.startswith('📊'):
+            # Подзаголовки с иконками
+            p = doc.add_paragraph(line.strip())
+            p.style = 'Heading 2'
+            p_format = p.paragraph_format
+            p_format.space_before = Pt(6)
+            p_format.space_after = Pt(4)
+        elif line.startswith('  '):
+            # Отступанные строки (параметры, данные)
+            p = doc.add_paragraph(line.lstrip(), style='List Bullet')
+            p_format = p.paragraph_format
+            p_format.left_indent = Inches(0.5)
+        elif '─' in line:
+            # Разделители - пустая строка
+            continue
+        else:
+            # Обычный текст
+            p = doc.add_paragraph(line)
+            p_format = p.paragraph_format
+            p_format.space_after = Pt(6)
+
+
+def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
+    """
+    Преобразовать отдельный TXT файл в DOCX
+
+    Args:
+        txt_path: Путь к TXT файлу
+        output_path: Путь к выходному DOCX файлу (если None, создается рядом с TXT)
+
+    Returns:
+        str: Путь к созданному DOCX файлу
+    """
+    if not DOCX_AVAILABLE:
+        print("[!] Модуль python-docx не установлен. Установите: pip install python-docx")
+        return ""
+
+    txt_path = Path(txt_path)
+    if not txt_path.exists():
+        print(f"[!] TXT файл не найден: {txt_path}")
+        return ""
+
+    # Определяем выходной путь
+    if output_path is None:
+        output_path = txt_path.parent / f"{txt_path.stem}.docx"
+    else:
+        output_path = Path(output_path)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        doc = Document()
+
+        # Читаем TXT файл
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Парсим и добавляем в документ
+        _parse_and_add_to_docx(doc, content)
+
+        # Сохраняем
+        doc.save(str(output_path))
+        print(f"[+] DOCX файл сохранен: {output_path}")
+        return str(output_path)
+
+    except Exception as e:
+        print(f"[!] Ошибка при преобразовании в DOCX: {e}")
+        return ""
+
+
 # Пример использования
+
 if __name__ == "__main__":
 
-    # Пример 1: Создание объединенного отчета из недавних отчетов (последние 5 минут)
+    # Пример 1️⃣: Создание объединенного отчета из недавних отчетов (последние 5 минут) с DOCX
     """
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result = create_combined_report(scan_id, recent_minutes=5, method='line_by_line')
-    print(f"\n✅ Объединенный отчет из недавних отчетов создан:")
+    result = create_combined_report(scan_id, recent_minutes=5, method='line_by_line', include_docx=True)
+    print(f"\n✅ Объединенный отчет создан:")
     print(f"   JSON: {result['json']}")
     print(f"   TXT:  {result['txt']}")
+    print(f"   DOCX: {result['docx']}")
     """
 
-    # Пример 2: Создание отчета с указанием временного окна
+    # Пример 2️⃣: Создание отчета с указанием временного окна с DOCX
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start_time = datetime.now() - timedelta(minutes=10)
     result2 = create_combined_report_by_time(
-        scan_id, start_time, method='line_by_line')
-    print(f"\n✅ Объединенный отчет за последние 10 минут создан:")
+        scan_id, start_time, method='line_by_line', include_docx=True)
+    print(f"\n✅ Объединенный отчет создан:")
     print(f"   JSON: {result2['json']}")
     print(f"   TXT:  {result2['txt']}")
+    if result2['docx']:
+        print(f"   DOCX: {result2['docx']}")
 
-    # Пример 3: Быстрое объединение всех отчетов
+    # Пример 3️⃣: Быстрое объединение всех отчетов с DOCX
     """
-    result3 = quick_merge_all_reports(output_name="all_reports_merged")
+    result3 = quick_merge_all_reports(output_name="all_reports_merged", include_docx=True)
     print(f"\n✅ Все отчеты объединены:")
     print(f"   JSON: {result3['json']}")
     print(f"   TXT:  {result3['txt']}")
+    print(f"   DOCX: {result3['docx']}")
+    """
+
+    # Пример 4️⃣: Преобразование отдельного TXT файла в DOCX
+    """
+    docx_path = txt_to_docx_file('/path/to/report.txt')
+    print(f"✅ TXT преобразован в DOCX: {docx_path}")
     """
