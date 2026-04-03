@@ -456,6 +456,100 @@ $danger: #ef4444;
           color: $accent;
         }
       }
+
+      .task-last-scan {
+        margin-top: 8px;
+        padding: 8px;
+        background: rgba(16, 185, 129, 0.05);
+        border-left: 3px solid $success;
+        border-radius: 4px;
+        
+        .last-scan-header {
+          font-size: 12px;
+          font-weight: 600;
+          color: $success;
+          margin-bottom: 6px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid rgba(16, 185, 129, 0.2);
+        }
+        
+        .last-scan-info {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          
+          .scan-folder,
+          .scan-time {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+            font-family: monospace;
+            
+            .folder-label,
+            .time-label {
+              color: $text-secondary;
+              font-weight: 500;
+              min-width: 50px;
+            }
+            
+            .folder-id,
+            .time-value {
+              color: $accent;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+              flex: 1;
+            }
+          }
+          
+          .scan-results {
+            margin-top: 4px;
+            
+            .results-label {
+              display: block;
+              font-size: 10px;
+              font-weight: 500;
+              color: $text-secondary;
+              margin-bottom: 3px;
+            }
+            
+            .results-list {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 4px;
+              
+              .result-item {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                padding: 2px 6px;
+                background: rgba(0, 0, 0, 0.4);
+                border-radius: 3px;
+                font-size: 10px;
+                
+                .tool-name {
+                  color: $text-secondary;
+                  font-weight: 500;
+                }
+                
+                .result-status {
+                  font-weight: bold;
+                  font-size: 11px;
+                  
+                  &.success {
+                    color: $success;
+                  }
+                  
+                  &.error {
+                    color: $danger;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

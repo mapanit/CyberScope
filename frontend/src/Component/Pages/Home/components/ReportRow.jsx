@@ -3,6 +3,11 @@ import React from 'react';
 const ReportRow = ({ report, icon = '', bgColor, btnColor = '#0066cc', onDownload, onDelete }) => {
     const hoverColor = btnColor === '#0066cc' ? '#0052a3' : (btnColor === '#00cc00' ? '#009900' : '#0052a3');
     
+    // Обработка как объекта {filename, size, created} так и строки
+    const filename = typeof report === 'string' ? report : report?.filename || report;
+    const size = typeof report === 'object' && report?.size ? (report.size / 1024).toFixed(2) + ' KB' : '';
+    const created = typeof report === 'object' && report?.created ? new Date(report.created * 1000).toLocaleDateString() : '';
+    
     return (
         <div 
             style={{
@@ -17,9 +22,16 @@ const ReportRow = ({ report, icon = '', bgColor, btnColor = '#0066cc', onDownloa
                 color: 'black'
             }}
         >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={report}>
-                {icon} {report}
-            </span>
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={filename}>
+                    {icon} {filename}
+                </span>
+                {size && (
+                    <span style={{ fontSize: '10px', color: '#666', marginTop: '2px' }}>
+                        {size} {created && `• ${created}`}
+                    </span>
+                )}
+            </div>
             <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
                 <button
                     type="button"

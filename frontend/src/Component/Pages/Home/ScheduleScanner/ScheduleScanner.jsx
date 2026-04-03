@@ -43,13 +43,28 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
   // Загрузка сохраненных задач
   useEffect(() => {
-    const saved = localStorage.getItem('scheduledScans');
-    if (saved) {
-      setScheduledTasks(JSON.parse(saved));
-    }
+    fetchTasks();
   }, []);
 
-  // Сохранение задач
+  // Загрузить задачи с backend
+  const fetchTasks = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/tasks');
+      const data = await response.json();
+      if (data.status === 'success') {
+        setScheduledTasks(data.tasks);
+      }
+    } catch (error) {
+      console.error('Ошибка при загрузке задач:', error);
+      // Fallback на localStorage
+      const saved = localStorage.getItem('scheduledScans');
+      if (saved) {
+        setScheduledTasks(JSON.parse(saved));
+      }
+    }
+  };
+
+  // Сохранение задач (локально для UI, отправка на backend при создании)
   const saveTasks = (tasks) => {
     localStorage.setItem('scheduledScans', JSON.stringify(tasks));
     setScheduledTasks(tasks);
@@ -118,7 +133,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   };
 
   // Добавление задачи
-  const addSchedule = () => {
+  const addSchedule = async () => {
     if (!query.trim()) {
       alert(language === "ru" ? 'Пожалуйста, введите цель сканирования' : 'Please enter the scan target');
       return;
@@ -158,7 +173,6 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     }
 
     const newTask = {
-      id: Date.now(),
       type: scheduleType,
       time: scheduleTime,
       date: scheduleDate,
@@ -173,33 +187,66 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
       lastRun: null
     };
 
-    const updatedTasks = [...scheduledTasks, newTask];
-    saveTasks(updatedTasks);
-    
-    if (onSchedule) {
-      onSchedule(newTask);
-    }
+    try {
+      // Отправляем задачу на backend
+      const response = await fetch('http://localhost:8000/api/tasks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(newTask)
+      });
 
-    alert(language === "ru" ? '✅ Сканирование успешно запланировано!' : '✅ Scan successfully scheduled!');
-    
-    // Сброс формы
-    setScheduleType('once');
-    setScheduleTime('');
-    setScheduleDate('');
-    setScheduleDays([]);
-    setScheduleMonthDay(1);
+      if (!response.ok) {
+        throw new Error('Failed to create task on server');
+      }
+
+      const data = await response.json();
+      
+      // Перезагружаем список задач с backend
+      await fetchTasks();
+      
+      if (onSchedule) {
+        onSchedule(newTask);
+      }
+
+      alert(language === "ru" ? '✅ Сканирование успешно запланировано!' : '✅ Scan successfully scheduled!');
+      
+      // Сброс формы
+      setScheduleType('once');
+      setScheduleTime('');
+      setScheduleDate('');
+      setScheduleDays([]);
+      setScheduleMonthDay(1);
+    } catch (error) {
+      console.error('Ошибка при создании задачи:', error);
+      alert(language === "ru" ? 'Ошибка при сохранении задачи' : 'Error saving task');
+    }
   };
 
   // Удаление задачи
-  const deleteTask = (taskId) => {
+  const deleteTask = async (taskId) => {
     if (window.confirm(language === "ru" ? 'Вы уверены, что хотите удалить это запланированное сканирование?' : 'Are you sure you want to delete this scheduled scan?')) {
-      const updatedTasks = scheduledTasks.filter(task => task.id !== taskId);
-      saveTasks(updatedTasks);
+      try {
+        const response = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+          method: 'DELETE'
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete task');
+        }
+
+        // Перезагружаем список задач
+        await fetchTasks();
+      } catch (error) {
+        console.error('Ошибка при удалении задачи:', error);
+        alert(language === "ru" ? 'Ошибка при удалении задачи' : 'Error deleting task');
+      }
     }
   };
 
   // Редактирование задачи
-  const editTask = (task) => {
+  const editTask = async (task) => {
     setScheduleType(task.type);
     setScheduleTime(task.time);
     setScheduleDate(task.date || '');
@@ -209,7 +256,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     setActiveTools(task.activeTools);
     setAllowInternal(task.allowInternal);
     
-    deleteTask(task.id);
+    await deleteTask(task.id);
     setViewMode('create');
   };
 
@@ -475,6 +522,40 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
                     <span>{task.activeTools.map(t => t.toUpperCase()).join(', ')}</span>
                   </div>
                 </div>
+
+                {/* Информация о последнем сканировании */}
+                {task.last_scan_folder && (
+                  <div className="task-last-scan">
+                    <div className="last-scan-header">
+                      📁 {language === "ru" ? 'Последнее сканирование' : 'Last Scan'}
+                    </div>
+                    <div className="last-scan-info">
+                      <div className="scan-folder">
+                        <span className="folder-label">{language === "ru" ? 'Папка' : 'Folder'}:</span>
+                        <span className="folder-id">{task.last_scan_folder}</span>
+                      </div>
+                      <div className="scan-time">
+                        <span className="time-label">{language === "ru" ? 'Время' : 'Time'}:</span>
+                        <span className="time-value">{task.last_scan_time}</span>
+                      </div>
+                      {task.scan_results && task.scan_results.length > 0 && (
+                        <div className="scan-results">
+                          <span className="results-label">{language === "ru" ? 'Результаты' : 'Results'}:</span>
+                          <div className="results-list">
+                            {task.scan_results.map((result, idx) => (
+                              <div key={idx} className="result-item">
+                                <span className="tool-name">{result.tool}</span>
+                                <span className={`result-status ${result.success ? 'success' : 'error'}`}>
+                                  {result.success ? '✓' : '✗'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             ))
           )}

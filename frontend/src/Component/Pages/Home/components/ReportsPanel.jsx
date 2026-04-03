@@ -107,15 +107,18 @@ const ReportsPanel = ({
                         </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {wordReports.map((report, index) => (
-                            <ReportRow 
-                                key={index}
-                                report={report}
-                                bgColor="#f5f5f5"
-                                onDownload={() => downloadWordReport(report)}
-                                onDelete={() => deleteWordReport(report)}
-                            />
-                        ))}
+                        {wordReports.map((report, index) => {
+                            const filename = typeof report === 'string' ? report : report?.filename;
+                            return (
+                                <ReportRow 
+                                    key={index}
+                                    report={report}
+                                    bgColor="#f5f5f5"
+                                    onDownload={() => downloadWordReport(filename)}
+                                    onDelete={() => deleteWordReport(filename)}
+                                />
+                            );
+                        })}
                     </div>
                 </div>
             )}

@@ -115,7 +115,16 @@ class ScanScheduler:
     def _should_run_task(self, task: dict) -> bool:
         """Проверить должна ли задача запуститься"""
         now = datetime.datetime.now()
-        next_run = datetime.datetime.fromisoformat(task.get('nextRun', now.isoformat()))
+        try:
+            next_run_str = task.get('nextRun', now.isoformat())
+            # Парсим строку как naive datetime (убираем timezone информацию)
+            next_run = datetime.datetime.fromisoformat(next_run_str.replace('Z', '+00:00'))
+            # Удаляем информацию о часовом поясе если она есть
+            if next_run.tzinfo is not None:
+                next_run = next_run.replace(tzinfo=None)
+        except Exception as e:
+            logger.error(f"Ошибка парсинга nextRun: {e}")
+            return False
         
         # Если это прошлое время - не запускаем
         if next_run > now:
@@ -123,16 +132,28 @@ class ScanScheduler:
         
         # Если уже запускалась в этот момент - не запускаем дважды
         if task.get('last_run'):
-            last_run = datetime.datetime.fromisoformat(task['last_run'])
-            # Если запускалась менее 5 минут назад - пропускаем
-            if (now - last_run).total_seconds() < 300:
-                return False
+            try:
+                last_run_str = task['last_run']
+                last_run = datetime.datetime.fromisoformat(last_run_str.replace('Z', '+00:00'))
+                # Удаляем информацию о часовом поясе если она есть
+                if last_run.tzinfo is not None:
+                    last_run = last_run.replace(tzinfo=None)
+                # Если запускалась менее 5 минут назад - пропускаем
+                if (now - last_run).total_seconds() < 300:
+                    return False
+            except Exception as e:
+                logger.error(f"Ошибка парсинга last_run: {e}")
+                pass
         
         return True
     
     def _calculate_next_run(self, task: dict) -> datetime.datetime:
         """Рассчитать следующее время запуска задачи"""
         now = datetime.datetime.now()
+        # Убеждаемся что now не имеет timezone информации
+        if now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+        
         schedule_type = task.get('type', 'once')
         schedule_time = task.get('time', '00:00')
         
@@ -190,34 +211,54 @@ class ScanScheduler:
         logger.info(f"   Цель: {task.get('query')}")
         logger.info(f"   Инструменты: {', '.join(task.get('activeTools', []))}")
         
+        # Создаем папку для этого запуска сканирования
+        scan_run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        scan_folder = f"scheduled_{task_id}_{scan_run_id}"
+        
         # Обновляем в задаче время последнего запуска
         task['last_run'] = datetime.datetime.now().isoformat()
         task['status'] = 'running'
+        task['last_scan_folder'] = scan_folder
+        task['last_scan_time'] = scan_run_id
         
         # Вычисляем следующее время запуска
         task['nextRun'] = self._calculate_next_run(task).isoformat()
         self.update_task(task_id, task)
         
         try:
+            scan_results = []
+            
             # Запускаем каждый инструмент
             for tool in task.get('activeTools', []):
                 if tool in self.scan_callbacks:
                     callback = self.scan_callbacks[tool]
                     try:
                         logger.info(f"   ► Запуск {tool}...")
-                        await callback(
+                        result = await callback(
                             target=task['query'],
                             allow_internal=task.get('allowInternal', False),
-                            task_id=task_id
+                            task_id=scan_folder  # Передаем ID папки вместо task_id
                         )
+                        scan_results.append({
+                            'tool': tool,
+                            'status': 'completed',
+                            'result': result
+                        })
                         logger.info(f"   ✓ {tool} завершен")
                     except Exception as e:
                         logger.error(f"   ✗ Ошибка при запуске {tool}: {e}")
+                        scan_results.append({
+                            'tool': tool,
+                            'status': 'failed',
+                            'error': str(e)
+                        })
                 else:
                     logger.warning(f"   ⚠ Callback для {tool} не зарегистрирован")
             
             task['status'] = 'completed'
+            task['scan_results'] = scan_results
             logger.info(f"✓ Задача завершена: {task_id}")
+            logger.info(f"   📁 Папка отчетов: {scan_folder}")
             
         except Exception as e:
             task['status'] = 'failed'
@@ -236,9 +277,10 @@ class ScanScheduler:
                 # Проверяем каждую задачу
                 for task_id, task in list(self.tasks.items()):
                     if task.get('status') != 'disabled' and self._should_run_task(task):
-                        await self._execute_task(task_id, task)
+                        # Запускаем задачу в отдельной задаче asyncio
+                        asyncio.create_task(self._execute_task(task_id, task))
                 
-                # Ждем 1 минуту перед следующей проверкой
+                # Ждем 60 секунд перед следующей проверкой
                 await asyncio.sleep(60)
                 
             except Exception as e:
@@ -254,7 +296,14 @@ class ScanScheduler:
         self.running = True
         logger.info("▶ Запуск планировщика...")
         
-        # Запускаем цикл планировщика в отдельной задаче asyncio
+        # Запускаем цикл планировщика в отдельной корутине asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Создаем task для цикла планировщика
         asyncio.create_task(self._scheduler_loop())
     
     def stop(self):

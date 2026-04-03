@@ -4,19 +4,48 @@
  */
 export const reportService = {
     async downloadWordReport(filename) {
-        const response = await fetch(`http://localhost:8000/api/download-word-report?filename=${encodeURIComponent(filename)}`);
-        if (!response.ok) throw new Error('Ошибка при скачивании файла');
+        const response = await fetch(
+            `http://localhost:8000/api/download-word-report?filename=${encodeURIComponent(filename)}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                }
+            }
+        );
+        if (!response.ok) throw new Error(`Ошибка при скачивании файла: ${response.statusText}`);
         const blob = await response.blob();
-        this._downloadBlob(blob, filename);
+        
+        // Убеждаемся что файл имеет расширение .docx
+        const finalFilename = filename.endsWith('.docx') ? filename : filename + '.docx';
+        this._downloadBlob(blob, finalFilename);
     },
 
     async downloadCombinedReport(filename, reportType = 'json') {
+        const types = {
+            'json': 'application/json',
+            'txt': 'text/plain',
+            'word': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        };
+        
         const response = await fetch(
-            `http://localhost:8000/api/download-combined-report?filename=${encodeURIComponent(filename)}&report_type=${reportType}`
+            `http://localhost:8000/api/download-combined-report?filename=${encodeURIComponent(filename)}&report_type=${reportType}`,
+            {
+                method: 'GET',
+                headers: {
+                    'Accept': types[reportType] || 'application/octet-stream'
+                }
+            }
         );
-        if (!response.ok) throw new Error('Ошибка при скачивании файла');
+        if (!response.ok) throw new Error(`Ошибка при скачивании файла: ${response.statusText}`);
         const blob = await response.blob();
-        this._downloadBlob(blob, filename);
+        
+        // Определяем правильное расширение файла
+        const extension = (reportType === 'word' || reportType === 'docx') ? '.docx' : `.${reportType}`;
+        const finalFilename = filename.endsWith(extension) ? filename : filename + extension;
+        
+        this._downloadBlob(blob, finalFilename);
     },
 
     async downloadTxtReport(tool, filename) {
@@ -68,12 +97,22 @@ export const reportService = {
     },
 
     _downloadBlob(blob, filename) {
-        const link = document.createElement('a');
-        link.href = window.URL.createObjectURL(blob);
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(link.href);
+        try {
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename || 'report';
+            document.body.appendChild(link);
+            link.click();
+            
+            // Очищаем ресурсы
+            setTimeout(() => {
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+        } catch (error) {
+            console.error('Ошибка при скачивании файла:', error);
+            throw new Error(`Ошибка при скачивании файла: ${error.message}`);
+        }
     }
 };
