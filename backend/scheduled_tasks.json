@@ -1,0 +1,100 @@
+{
+  "1775306194258": {
+    "type": "daily",
+    "time": "15:37",
+    "date": "",
+    "days": [],
+    "monthDay": 1,
+    "query": "http://127.0.0.1:5012/",
+    "activeTools": [
+      "wappalyzer",
+      "scanner",
+      "retire"
+    ],
+    "allowInternal": true,
+    "nextRun": "2026-04-05T15:37:00",
+    "createdAt": "2026-04-04T12:35:57.132Z",
+    "status": "completed",
+    "lastRun": null,
+    "created_at": "2026-04-04T15:36:34.258594",
+    "last_run": "2026-04-04T15:42:10.364429",
+    "last_scan_folder": "scheduled_1775306194258_20260404_154210",
+    "last_scan_time": "20260404_154210",
+    "scan_results": [
+      {
+        "tool": "wappalyzer",
+        "status": "completed",
+        "result": null
+      },
+      {
+        "tool": "scanner",
+        "status": "completed",
+        "result": null
+      },
+      {
+        "tool": "retire",
+        "status": "completed",
+        "result": null
+      }
+    ]
+  },
+  "1775306207153": {
+    "type": "once",
+    "time": "15:37",
+    "date": "2026-04-14",
+    "days": [],
+    "monthDay": 1,
+    "query": "http://127.0.0.1:5012/",
+    "activeTools": [
+      "wappalyzer",
+      "scanner",
+      "retire"
+    ],
+    "allowInternal": true,
+    "nextRun": "2026-04-14T12:37:00.000Z",
+    "createdAt": "2026-04-04T12:36:11.237Z",
+    "status": "pending",
+    "lastRun": null,
+    "created_at": "2026-04-04T15:36:47.153658",
+    "last_run": null
+  },
+  "1775306238331": {
+    "type": "daily",
+    "time": "15:38",
+    "date": "2026-04-14",
+    "days": [],
+    "monthDay": 1,
+    "query": "http://127.0.0.1:5012/",
+    "activeTools": [
+      "wappalyzer",
+      "scanner",
+      "retire"
+    ],
+    "allowInternal": true,
+    "nextRun": "2026-04-05T15:38:00",
+    "createdAt": "2026-04-04T12:36:42.162Z",
+    "status": "completed",
+    "lastRun": null,
+    "created_at": "2026-04-04T15:37:18.331524",
+    "last_run": "2026-04-04T15:43:16.274466",
+    "last_scan_folder": "scheduled_1775306238331_20260404_154316",
+    "last_scan_time": "20260404_154316",
+    "scan_results": [
+      {
+        "tool": "wappalyzer",
+        "status": "completed",
+        "result": null
+      },
+      {
+        "tool": "scanner",
+        "status": "completed",
+        "result": null
+      },
+      {
+        "tool": "retire",
+        "status": "completed",
+        "result": null
+      }
+    ]
+  }
+}

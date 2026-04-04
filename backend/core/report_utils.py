@@ -796,6 +796,7 @@ class CombinedReport:
     def txt_to_docx(self, txt_file_path: Optional[str] = None, output_path: Optional[Path] = None) -> str:
         """
         Преобразовать TXT отчет в DOCX (Word)
+        Оптимизирована для больших файлов с автоматическим выбором стратегии
 
         Args:
             txt_file_path: Путь к TXT файлу (если None, используется последний созданный)
@@ -818,6 +819,15 @@ class CombinedReport:
             print(f"[!] TXT файл не найден: {txt_file_path}")
             return ""
 
+        # Проверяем размер файла
+        file_size_kb = txt_file_path.stat().st_size / 1024
+        file_size_mb = file_size_kb / 1024
+        
+        if file_size_mb > 10:
+            print(f"[*] Большой файл ({file_size_mb:.2f} MB). Обработка может занять время...")
+        elif file_size_mb > 50:
+            print(f"[*] ОЧЕНЬ большой файл ({file_size_mb:.2f} MB). Используем оптимизированную обработку...")
+
         # Определяем путь к выходному файлу
         if output_path is None:
             output_path = self.word_dir / f"{self.filename_base}.docx"
@@ -827,22 +837,49 @@ class CombinedReport:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
+            print(f"[*] Начинаю преобразование TXT в DOCX: {txt_file_path.name} ({file_size_mb:.2f} MB)")
             doc = Document()
 
             # Читаем TXT файл и преобразуем в DOCX
-            with open(txt_file_path, 'r', encoding='utf-8') as f:
+            with open(txt_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
 
-            # Парсим содержимое и добавляем в документ
-            _parse_and_add_to_docx(doc, content)
+            print(f"[*] TXT файл загружен ({len(content)} символов). Начинаю парсинг...")
+
+            # Выбираем стратегию обработки на основе размера
+            if file_size_mb > 100:
+                print(f"[*] Использую режим таблиц для очень больших файлов")
+                _parse_and_add_to_docx_table(doc, content)
+            else:
+                # Парсим содержимое и добавляем в документ
+                _parse_and_add_to_docx(doc, content)
 
             # Сохраняем документ
+            print(f"[*] Сохраняю DOCX документ...")
             doc.save(str(output_path))
-            print(f"[+] DOCX отчет сохранен: {output_path}")
+            
+            output_size_mb = output_path.stat().st_size / (1024 * 1024)
+            print(f"[+] DOCX отчет успешно сохранен!")
+            print(f"[+] Путь: {output_path}")
+            print(f"[+] Размер DOCX: {output_size_mb:.2f} MB")
             return str(output_path)
 
+        except MemoryError as e:
+            print(f"[!] ОШИБКА ПАМЯТИ при преобразовании в DOCX (файл слишком большой)")
+            print(f"[*] Файл: {txt_file_path.name} ({file_size_mb:.2f} MB)")
+            print(f"[*] Рекомендации:")
+            print(f"   - Закройте другие программы для освобождения памяти")
+            print(f"   - Установите дополнительную виртуальную память (swap)")
+            print(f"   - Разбейте файл на несколько частей вручную")
+            return ""
         except Exception as e:
-            print(f"[!] Ошибка при преобразовании в DOCX: {e}")
+            print(f"[!] ОШИБКА при преобразовании в DOCX")
+            print(f"[!] Тип: {type(e).__name__}")
+            print(f"[!] Текст: {e}")
+            print(f"[*] Файл: {txt_file_path.name}")
+            import traceback
+            print("[*] Полный стек ошибки:")
+            traceback.print_exc()
             return ""
 
     def collect_and_merge_recent_with_docx(self, recent_minutes: int = 5, method: str = 'line_by_line', 
@@ -1034,56 +1071,154 @@ def quick_merge_all_reports(reports_base_dir: Optional[Path] = None,
 def _parse_and_add_to_docx(doc: 'Document', content: str) -> None:
     """
     Парсить TXT содержимое и добавить его в DOCX документ с форматированием
+    Оптимизирована для больших файлов
 
     Args:
         doc: Document объект из python-docx
         content: Текстовое содержимое для добавления
     """
     lines = content.split('\n')
+    paragraph_count = 0
+    max_paragraphs_per_batch = 100  # Обработка текста батчами
 
-    for line in lines:
-        if not line.strip():
-            # Пустая строка
-            doc.add_paragraph()
-            continue
+    try:
+        for i, line in enumerate(lines):
+            try:
+                if not line.strip():
+                    # Пустая строка
+                    doc.add_paragraph()
+                    paragraph_count += 1
+                    continue
 
-        # Определяем тип строки и добавляем с соответствующим форматированием
-        if '╔' in line or '═' in line or '║' in line or '╚' in line:
-            # Это линии разделители - пропускаем (будут пустые строки)
-            continue
-        elif line.startswith('ОБЪЕДИНЕННЫЙ ОТЧЕТ') or line.startswith('ИНФОРМАЦИЯ О СКАНИРОВАНИИ') or \
-             line.startswith('ИТОГОВАЯ СТАТИСТИКА') or line.startswith('ИНСТРУМЕНТ'):
-            # Заголовки разделов
-            p = doc.add_paragraph(line.strip())
-            p.style = 'Heading 1'
-            p_format = p.paragraph_format
-            p_format.space_before = Pt(12)
-            p_format.space_after = Pt(6)
-        elif line.startswith('🔧') or line.startswith('📋') or line.startswith('📊'):
-            # Подзаголовки с иконками
-            p = doc.add_paragraph(line.strip())
-            p.style = 'Heading 2'
-            p_format = p.paragraph_format
-            p_format.space_before = Pt(6)
-            p_format.space_after = Pt(4)
-        elif line.startswith('  '):
-            # Отступанные строки (параметры, данные)
-            p = doc.add_paragraph(line.lstrip(), style='List Bullet')
-            p_format = p.paragraph_format
-            p_format.left_indent = Inches(0.5)
-        elif '─' in line:
-            # Разделители - пустая строка
-            continue
-        else:
-            # Обычный текст
-            p = doc.add_paragraph(line)
-            p_format = p.paragraph_format
-            p_format.space_after = Pt(6)
+                # Определяем тип строки и добавляем с соответствующим форматированием
+                if '╔' in line or '═' in line or '║' in line or '╚' in line:
+                    # Это линии разделители - пропускаем (будут пустые строки)
+                    continue
+                elif line.startswith('ОБЪЕДИНЕННЫЙ ОТЧЕТ') or line.startswith('ИНФОРМАЦИЯ О СКАНИРОВАНИИ') or \
+                     line.startswith('ИТОГОВАЯ СТАТИСТИКА') or line.startswith('ИНСТРУМЕНТ'):
+                    # Заголовки разделов
+                    p = doc.add_paragraph(line.strip())
+                    p.style = 'Heading 1'
+                    p_format = p.paragraph_format
+                    p_format.space_before = Pt(12)
+                    p_format.space_after = Pt(6)
+                    paragraph_count += 1
+                elif line.startswith('🔧') or line.startswith('📋') or line.startswith('📊'):
+                    # Подзаголовки с иконками
+                    p = doc.add_paragraph(line.strip())
+                    p.style = 'Heading 2'
+                    p_format = p.paragraph_format
+                    p_format.space_before = Pt(6)
+                    p_format.space_after = Pt(4)
+                    paragraph_count += 1
+                elif line.startswith('  '):
+                    # Отступанные строки (параметры, данные)
+                    p = doc.add_paragraph(line.lstrip(), style='List Bullet')
+                    p_format = p.paragraph_format
+                    p_format.left_indent = Inches(0.5)
+                    paragraph_count += 1
+                elif '─' in line:
+                    # Разделители - пустая строка
+                    continue
+                else:
+                    # Обычный текст
+                    p = doc.add_paragraph(line)
+                    p_format = p.paragraph_format
+                    p_format.space_after = Pt(6)
+                    paragraph_count += 1
+
+            except Exception as line_error:
+                # Логируем ошибку для конкретной строки, но продолжаем обработку
+                print(f"[!] Ошибка при обработке строки {i+1}: {line_error}")
+                # Добавляем строку как простой текст без форматирования
+                try:
+                    doc.add_paragraph(line[:500])  # Ограничиваем длину строки
+                    paragraph_count += 1
+                except:
+                    pass  # Если не получилось даже обычный текст, пропускаем
+
+            # Периодический логинг прогресса для больших файлов
+            if paragraph_count % max_paragraphs_per_batch == 0 and paragraph_count > 0:
+                print(f"[*] Обработано {paragraph_count} параграфов...")
+
+    except Exception as e:
+        print(f"[!] Критическая ошибка при парсинге DOCX: {e}")
+        print(f"[*] Обработано {paragraph_count} параграфов перед ошибкой")
+        raise
+
+
+def _parse_and_add_to_docx_table(doc: 'Document', content: str) -> None:
+    """
+    Альтернативный парсинг с использованием таблиц - для очень больших файлов
+    Более эффективен для файлов > 100 MB
+
+    Args:
+        doc: Document объект из python-docx
+        content: Текстовое содержимое для добавления
+    """
+    lines = content.split('\n')
+    section_lines = []
+    current_section = None
+    table = None
+
+    try:
+        for i, line in enumerate(lines):
+            try:
+                # Определяем заголовки разделов
+                if line.startswith('🔧') or line.startswith('📋') or line.startswith('════'):
+                    # Сохраняем предыдущую таблицу если есть
+                    if section_lines and table is None:
+                        # Создаем таблицу для секции
+                        table = doc.add_table(rows=len(section_lines) + 1, cols=1)
+                        table.style = 'Light Grid Accent 1'
+                        cell = table.rows[0].cells[0]
+                        cell.text = current_section or "Содержимое"
+                        for idx, sec_line in enumerate(section_lines):
+                            cell = table.rows[idx + 1].cells[0]
+                            cell.text = sec_line[:200]  # Ограничиваем длину
+
+                    # Начинаем новую секцию
+                    doc.add_paragraph()
+                    p = doc.add_paragraph(line.strip())
+                    if '🔧' in line or '📋' in line:
+                        p.style = 'Heading 2'
+                    current_section = line.strip()
+                    section_lines = []
+                    table = None
+
+                elif not line.strip():
+                    continue
+
+                elif '═' in line or '║' in line or '╔' in line or '╚' in line or '─' in line:
+                    continue
+
+                else:
+                    section_lines.append(line[:200])  # Ограничиваем строки
+
+                    # Если секция слишком большая, сохраняем в таблицу
+                    if len(section_lines) >= 50:
+                        table = doc.add_table(rows=len(section_lines) + 1, cols=1)
+                        table.style = 'Light Grid Accent 1'
+                        cell = table.rows[0].cells[0]
+                        cell.text = current_section or "Содержимое"
+                        for idx, sec_line in enumerate(section_lines):
+                            cell = table.rows[idx + 1].cells[0]
+                            cell.text = sec_line
+                        section_lines = []
+
+            except Exception as line_error:
+                print(f"[!] Ошибка на строке {i+1}: {line_error}")
+                continue
+
+    except Exception as e:
+        print(f"[!] Ошибка при парсинге с таблицами: {e}")
+        raise
 
 
 def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
     """
     Преобразовать отдельный TXT файл в DOCX
+    Оптимизирована для больших файлов с автоматическим выбором стратегии
 
     Args:
         txt_path: Путь к TXT файлу
@@ -1101,6 +1236,15 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
         print(f"[!] TXT файл не найден: {txt_path}")
         return ""
 
+    # Проверяем размер файла
+    file_size_kb = txt_path.stat().st_size / 1024
+    file_size_mb = file_size_kb / 1024
+    
+    if file_size_mb > 10:
+        print(f"[*] Большой файл ({file_size_mb:.2f} MB). Обработка может занять время...")
+    elif file_size_mb > 50:
+        print(f"[*] ОЧЕНЬ большой файл ({file_size_mb:.2f} MB). Используем оптимизированную обработку...")
+
     # Определяем выходной путь
     if output_path is None:
         output_path = txt_path.parent / f"{txt_path.stem}.docx"
@@ -1110,22 +1254,49 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
+        print(f"[*] Начинаю преобразование TXT в DOCX: {txt_path.name} ({file_size_mb:.2f} MB)")
         doc = Document()
 
         # Читаем TXT файл
-        with open(txt_path, 'r', encoding='utf-8') as f:
+        with open(txt_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        # Парсим и добавляем в документ
-        _parse_and_add_to_docx(doc, content)
+        print(f"[*] TXT файл загружен ({len(content)} символов). Начинаю парсинг...")
+
+        # Выбираем стратегию обработки на основе размера
+        if file_size_mb > 100:
+            print(f"[*] Использую режим таблиц для очень больших файлов")
+            _parse_and_add_to_docx_table(doc, content)
+        else:
+            # Парсим и добавляем в документ
+            _parse_and_add_to_docx(doc, content)
 
         # Сохраняем
+        print(f"[*] Сохраняю DOCX документ...")
         doc.save(str(output_path))
-        print(f"[+] DOCX файл сохранен: {output_path}")
+        
+        output_size_mb = output_path.stat().st_size / (1024 * 1024)
+        print(f"[+] DOCX файл успешно сохранен!")
+        print(f"[+] Путь: {output_path}")
+        print(f"[+] Размер DOCX: {output_size_mb:.2f} MB")
         return str(output_path)
 
+    except MemoryError as e:
+        print(f"[!] ОШИБКА ПАМЯТИ при преобразовании в DOCX (файл слишком большой)")
+        print(f"[*] Файл: {txt_path.name} ({file_size_mb:.2f} MB)")
+        print(f"[*] Рекомендации:")
+        print(f"   - Закройте другие программы для освобождения памяти")
+        print(f"   - Установите дополнительную виртуальную память (swap)")
+        print(f"   - Разбейте файл на несколько частей вручную")
+        return ""
     except Exception as e:
-        print(f"[!] Ошибка при преобразовании в DOCX: {e}")
+        print(f"[!] ОШИБКА при преобразовании в DOCX")
+        print(f"[!] Тип: {type(e).__name__}")
+        print(f"[!] Текст: {e}")
+        print(f"[*] Файл: {txt_path.name}")
+        import traceback
+        print("[*] Полный стек ошибки:")
+        traceback.print_exc()
         return ""
 
 
