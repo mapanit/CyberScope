@@ -1,11 +1,10 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import "./Header.scss";
 
 const Header = ({
   toggleLanguage,
   language,
 }) => {
-  const navigate = useNavigate();
 
 
 
@@ -31,9 +30,9 @@ const Header = ({
           <button className="btn__language" onClick={toggleLanguage}>
             {language === "ru" ? "English" : "Русский"}
           </button>
-          <button className="btn__exit" onClick={() => navigate(-1)}>
-            {language === "ru" ? "Обратно" : "Back"}
-          </button>
+          <NavLink to="/user" className="btn__login">
+            {language === "ru" ? "Войти" : "Login"}
+          </NavLink>
         </div>
       </div>
     </header>

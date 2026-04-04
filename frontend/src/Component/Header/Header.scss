@@ -85,7 +85,7 @@ $accent: #06b6d4;
         color: $bg;
       }
 
-      .btn__exit {
+      .btn__login {
 
         background: $accent;
         color: $bg;
@@ -97,7 +97,7 @@ $accent: #06b6d4;
         transition: background 0.2s, color 0.2s;
       }
 
-      .btn__exit:hover {
+      .btn__login:hover {
         transform: scale(1.05);
         background: $text;
       }

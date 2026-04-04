@@ -12,6 +12,7 @@ import Questions from "./Component/Pages/Questions/Questions";
 import Task from "./Component/Pages/Task/Task";
 import Modal from "./Component/Modal/Modal";
 import Help from "./Component/Pages/Help/Help";
+import ProjectDashboard from "./Component/Pages/ProjectDashboard/ProjectDashboard";
 
 const pageVariants = {
   initial: {
@@ -140,6 +141,14 @@ function App() {
             element={
               <AnimatedPage>
                 <Help language={language} />
+              </AnimatedPage>
+            }
+          />
+          <Route
+            path="user"
+            element={
+              <AnimatedPage>
+                <ProjectDashboard language={language} />
               </AnimatedPage>
             }
           />
