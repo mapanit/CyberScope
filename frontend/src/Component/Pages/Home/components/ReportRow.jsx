@@ -1,6 +1,6 @@
 import React from 'react';
 
-const ReportRow = ({ report, icon = '', bgColor, btnColor = '#0066cc', onDownload, onDelete }) => {
+const ReportRow = ({ report, icon = '', bgColor, btnColor = '#0066cc', onDownload, onDelete, onView, reportType = 'json' }) => {
     const hoverColor = btnColor === '#0066cc' ? '#0052a3' : (btnColor === '#00cc00' ? '#009900' : '#0052a3');
     
     // Обработка как объекта {filename, size, created} так и строки
@@ -33,6 +33,28 @@ const ReportRow = ({ report, icon = '', bgColor, btnColor = '#0066cc', onDownloa
                 )}
             </div>
             <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+                {onView && (reportType === 'json' || reportType === 'txt_report') && (
+                    <button
+                        type="button"
+                        onClick={() => onView(filename, reportType)}
+                        style={{
+                            padding: '4px 8px',
+                            backgroundColor: '#9966ff',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontSize: '11px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0
+                        }}
+                        onMouseOver={(e) => e.target.style.backgroundColor = '#7744cc'}
+                        onMouseOut={(e) => e.target.style.backgroundColor = '#9966ff'}
+                        title="Просмотреть отчет"
+                    >
+                        👁️
+                    </button>
+                )}
                 <button
                     type="button"
                     onClick={onDownload}

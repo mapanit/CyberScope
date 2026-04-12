@@ -1,4 +1,9 @@
-import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  useLocation,
+} from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -13,29 +18,30 @@ import Task from "./Component/Pages/Task/Task";
 import Modal from "./Component/Modal/Modal";
 import Help from "./Component/Pages/Help/Help";
 import ProjectDashboard from "./Component/Pages/ProjectDashboard/ProjectDashboard";
+import Login from "./Component/Pages/Login/Login";
 
 const pageVariants = {
   initial: {
     opacity: 0,
     y: 20,
-    scale: 0.98
+    scale: 0.98,
   },
   in: {
     opacity: 1,
     y: 0,
-    scale: 1
+    scale: 1,
   },
   out: {
     opacity: 0,
     y: -20,
-    scale: 0.98
-  }
+    scale: 0.98,
+  },
 };
 
 const pageTransition = {
   type: "tween",
   ease: "anticipate",
-  duration: 0.4
+  duration: 0.4,
 };
 
 // Варианты анимации для модального окна
@@ -43,7 +49,7 @@ const modalVariants = {
   hidden: {
     opacity: 0,
     scale: 0.8,
-    y: -20
+    y: -20,
   },
   visible: {
     opacity: 1,
@@ -52,14 +58,14 @@ const modalVariants = {
     transition: {
       type: "spring",
       damping: 25,
-      stiffness: 300
-    }
+      stiffness: 300,
+    },
   },
   exit: {
     opacity: 0,
     scale: 0.8,
-    y: 20
-  }
+    y: 20,
+  },
 };
 
 // Компонент для анимированных страниц
@@ -71,7 +77,7 @@ const AnimatedPage = ({ children }) => {
       exit="out"
       variants={pageVariants}
       transition={pageTransition}
-      style={{ width: '100%' }}
+      style={{ width: "100%" }}
     >
       {children}
     </motion.div>
@@ -145,7 +151,23 @@ function App() {
             }
           />
           <Route
-            path="user"
+            path="/login"
+            element={
+              <AnimatedPage>
+                <Login language={language} />
+              </AnimatedPage>
+            }
+          />
+          <Route
+            path="/login"
+            element={
+              <AnimatedPage>
+                <Login language={language} />
+              </AnimatedPage>
+            }
+          />
+          <Route
+            path="/user"
             element={
               <AnimatedPage>
                 <ProjectDashboard language={language} />

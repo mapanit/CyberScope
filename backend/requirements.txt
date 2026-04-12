@@ -18,3 +18,8 @@ python-dotenv
 aiohttp
 aiogram
 nvdlib
+sqlalchemy 
+psycopg2-binary 
+python-jose 
+passlib 
+python-multipart

@@ -1,7 +1,7 @@
 # server.py
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
 from urllib.parse import urlparse
 import asyncio
 import ipaddress
@@ -29,10 +29,19 @@ from scanners.ssl_tls_scanner import SSLTLSScanner
 from scanners.dns_scanner import simple_scan as dns_scan
 from scanners.nmap_scanner import NmapScanner, simple_scan as nmap_scan
 from core.report_utils import create_combined_report
+# from auth.sqlalchemy.orm import Session
+# from auth.database import engine, get_db
+# from models import Base
+# from auth.schemas import UserCreate, UserLogin, UserResponse, Token
+# from auth.auth import authenticate_user, create_access_token, get_password_hash, get_current_user
+# import models
 
 # Глобальный словарь для отслеживания статуса сканирований
 _scan_sessions = {}
 _scan_sessions_lock = threading.Lock()
+
+
+# Base.metadata.create_all(bind=engine)
 
 
 def create_scan_session(scan_id: str) -> dict:
@@ -2303,6 +2312,75 @@ async def _register_scan_callbacks():
         if tool_name not in scheduler.scan_callbacks:
             scheduler.register_callback(tool_name, callback)
             logger.info(f"✓ Callback зарегистрирован для {tool_name}")
+
+
+@app.get("/api/get-report-content")
+async def get_report_content(filename: str = Query(..., description="Имя файла отчета"), report_type: str = Query("json", description="Тип отчета: json, txt_report, или combined")):
+    """
+    Получить содержимое отчета для просмотра в браузере
+    
+    Args:
+        filename: Имя файла отчета
+        report_type: Тип отчета:
+            - 'json': JSON отчеты из combined/json
+            - 'txt_report': TXT отчеты из combined/txt
+            - 'combined': Все типы из combined
+    
+    Returns:
+        Текстовое содержимое файла
+    """
+    try:
+        # Защита от path traversal
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(
+                status_code=400, detail="Недопустимое имя файла")
+
+        reports_base = Path(__file__).parent / "reports" / "combined"
+
+        if report_type == "json":
+            file_path = reports_base / "json" / filename
+            if not file_path.exists() or not file_path.suffix.lower() == ".json":
+                raise HTTPException(status_code=404, detail="JSON файл не найден")
+        
+        elif report_type == "txt_report":
+            file_path = reports_base / "txt" / filename
+            if not file_path.exists() or not file_path.suffix.lower() == ".txt":
+                raise HTTPException(status_code=404, detail="TXT файл не найден")
+        
+        else:
+            raise HTTPException(
+                status_code=400, detail="Неизвестный тип отчета")
+
+        # Читаем содержимое файла
+        try:
+            if report_type == "json":
+                # Для JSON файлов читаем и парсим
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # Проверяем, что это валидный JSON
+                json.loads(content)
+                return PlainTextResponse(content, media_type="text/plain")
+            else:
+                # Для TXT файлов просто читаем
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                return PlainTextResponse(content, media_type="text/plain")
+        
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=500, detail="Ошибка при чтении файла (кодировка)")
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=400, detail="Файл не является корректным JSON")
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Ошибка при чтении файла: {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка при получении содержимого отчета: {str(e)}")
 
 
 if __name__ == "__main__":

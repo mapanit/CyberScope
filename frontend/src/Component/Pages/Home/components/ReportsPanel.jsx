@@ -21,7 +21,7 @@ const ReportsPanel = ({
     deleteCombinedReport,
     deleteTxtReport,
     deleteAllWordReports,
-
+    openReportViewer,
     clearAllReports,
     language = "ru"
 }) => {
@@ -173,6 +173,25 @@ const ReportsPanel = ({
                                             <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
                                                 <button
                                                     type="button"
+                                                    onClick={() => openReportViewer(filename, 'txt_report')}
+                                                    style={{
+                                                        padding: '4px 8px',
+                                                        backgroundColor: '#9966ff',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '3px',
+                                                        cursor: 'pointer',
+                                                        fontSize: '11px',
+                                                        whiteSpace: 'nowrap'
+                                                    }}
+                                                    onMouseOver={(e) => e.target.style.backgroundColor = '#7744cc'}
+                                                    onMouseOut={(e) => e.target.style.backgroundColor = '#9966ff'}
+                                                    title={language === "ru" ? "Просмотреть" : "View"}
+                                                >
+                                                    👁️
+                                                </button>
+                                                <button
+                                                    type="button"
                                                     onClick={() => downloadTxtReport(tool, filename)}
                                                     style={{
                                                         padding: '4px 8px',
@@ -186,7 +205,7 @@ const ReportsPanel = ({
                                                     }}
                                                     onMouseOver={(e) => e.target.style.backgroundColor = '#0052a3'}
                                                     onMouseOut={(e) => e.target.style.backgroundColor = '#0066cc'}
-                                                    title="Скачать"
+                                                    title={language === "ru" ? "Скачать" : "Download"}
                                                 >
                                                     ⬇️
                                                 </button>
@@ -205,7 +224,7 @@ const ReportsPanel = ({
                                                     }}
                                                     onMouseOver={(e) => e.target.style.backgroundColor = '#990000'}
                                                     onMouseOut={(e) => e.target.style.backgroundColor = '#cc3333'}
-                                                    title="Удалить"
+                                                    title={language === "ru" ? "Удалить" : "Delete"}
                                                 >
                                                     🗑️
                                                 </button>
@@ -336,6 +355,8 @@ const ReportsPanel = ({
                                         icon="📄"
                                         bgColor="#e8f4fd"
                                         btnColor="#0066cc"
+                                        reportType="json"
+                                        onView={openReportViewer}
                                         onDownload={() => downloadCombinedReport(report, 'json')}
                                         onDelete={() => deleteCombinedReport(report, 'json')}
                                     />
@@ -356,6 +377,8 @@ const ReportsPanel = ({
                                         icon="📝"
                                         bgColor="#fff4e6"
                                         btnColor="#ff9900"
+                                        reportType="txt_report"
+                                        onView={openReportViewer}
                                         onDownload={() => downloadCombinedReport(report, 'txt')}
                                         onDelete={() => deleteCombinedReport(report, 'txt')}
                                     />

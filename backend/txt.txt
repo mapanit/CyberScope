@@ -1,0 +1,16 @@
+Создаем директорий данных и системные таблицы
+
+sudo -u postgres initdb --locale $LANG -E UTF8 -D '/var/lib/postgres/data'
+
+sudo systemctl start postgresql
+sudo -u postgres psql
+
+-- Создание пользователя
+CREATE USER myuser WITH PASSWORD 'mypassword';
+-- Создание базы данных с владельцем
+CREATE DATABASE mydatabase OWNER myuser;
+
+-- Выход из psql
+\q
+
+psql -h localhost -U mahanit -d db_cyberscope -W

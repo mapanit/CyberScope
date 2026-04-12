@@ -1305,6 +1305,7 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
 if __name__ == "__main__":
 
     # Пример 1️⃣: Создание объединенного отчета из недавних отчетов (последние 5 минут) с DOCX
+    
     """
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     result = create_combined_report(scan_id, recent_minutes=5, method='line_by_line', include_docx=True)
@@ -1313,8 +1314,10 @@ if __name__ == "__main__":
     print(f"   TXT:  {result['txt']}")
     print(f"   DOCX: {result['docx']}")
     """
+    
 
     # Пример 2️⃣: Создание отчета с указанием временного окна с DOCX
+
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start_time = datetime.now() - timedelta(minutes=10)
     result2 = create_combined_report_by_time(

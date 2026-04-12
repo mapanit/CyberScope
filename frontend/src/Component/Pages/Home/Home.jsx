@@ -4,6 +4,7 @@ import Tools from './Tools/Tools';
 import SearchForm from './components/SearchForm';
 import ReportsPanel from './components/ReportsPanel';
 import ResultsSection from './components/ResultsSection';
+import ReportViewer from './components/ReportViewer/ReportViewer';
 import ScheduleScanner from './ScheduleScanner/ScheduleScanner';
 import Image from "../../../Img/clock.png";
 import { useScanState } from './hooks/useScanState';
@@ -16,6 +17,8 @@ const Search = ({ language = "ru" }) => {
     const [activeMenu, setActiveMenu] = useState(false);
     const [activeScheduleScanner, setActiveScheduleScanner] = useState(false);
     const [btn, setBtn] = useState(false);
+    const [viewerOpen, setViewerOpen] = useState(false);
+    const [viewerData, setViewerData] = useState({ filename: '', reportType: '' });
 
     // кастомные хуки для управления состоянием
     const {
@@ -45,34 +48,75 @@ const Search = ({ language = "ru" }) => {
     } = useReports();
 
     // Основной обработчик отправки формы
-    const handleSubmit = async (e) => {
+    const handleSubmit = async (e, urlsList = null) => {
         e.preventDefault();
+        
+        // Используем переданный список URL'ов или query
+        const urls = urlsList || (Array.isArray(query) ? query : [query]);
+        
+        if (!urls || urls.length === 0) {
+            alert(language === "ru" ? 'Пожалуйста, введите URL' : 'Please enter a URL');
+            return;
+        }
+
         try {
-            scanService.validateInput(query, activeTools);
+            // Сканируем все URL'ы
+            const allResults = [];
+            
+            for (const url of urls) {
+                if (!url.trim()) continue;
+                
+                scanService.validateInput(url, activeTools);
+                setLoading(true);
+                setResults(null);
+                setScanAborted(false);
+                abortControllerRef.current = new AbortController();
 
-            setLoading(true);
-            setResults(null);
-            setScanAborted(false);
-            abortControllerRef.current = new AbortController();
+                try {
+                    const data = await scanService.runScan(
+                        url,
+                        activeTools,
+                        allowInternal,
+                        abortControllerRef.current.signal
+                    );
 
-            const data = await scanService.runScan(
-                query,
-                activeTools,
-                allowInternal,
-                abortControllerRef.current.signal
-            );
+                    if (!scanAborted) {
+                        allResults.push({
+                            url,
+                            data,
+                            timestamp: new Date().toISOString()
+                        });
+                    }
+                } catch (error) {
+                    if (error.name !== 'AbortError') {
+                        allResults.push({
+                            url,
+                            error: error.message,
+                            timestamp: new Date().toISOString()
+                        });
+                    }
+                }
+            }
 
-            if (!scanAborted) {
-                setResults(data);
+            if (allResults.length > 0 && !scanAborted) {
+                // Показываем результаты первого сканирования
+                setResults(allResults[0].data || null);
                 await fetchWordReports();
                 await fetchCombinedReports();
 
-                console.log(language === "ru" ? 'Сканирование завершено:' : 'Scan completed:', data);
+                console.log(language === "ru" ? 'Сканирование завершено:' : 'Scan completed:', allResults);
+                
+                // Если было несколько URL'ов, показываем уведомление
+                if (allResults.length > 1) {
+                    alert(language === "ru" 
+                        ? `Отсканировано ${allResults.length} сайтов` 
+                        : `Scanned ${allResults.length} websites`
+                    );
+                }
             }
 
         } catch (error) {
             if (error.name === 'AbortError') {
-
                 console.log(language === "ru" ? 'Сканирование отменено' : 'Scan cancelled');
                 return;
             }
@@ -87,6 +131,16 @@ const Search = ({ language = "ru" }) => {
     };
 
     // Вспомогательные функции для работы с отчетами
+    const openReportViewer = (filename, reportType) => {
+        setViewerData({ filename, reportType });
+        setViewerOpen(true);
+    };
+
+    const closeReportViewer = () => {
+        setViewerOpen(false);
+        setViewerData({ filename: '', reportType: '' });
+    };
+
     const downloadWordReport = async (filename) => {
         try {
             await reportService.downloadWordReport(filename);
@@ -512,6 +566,7 @@ const Search = ({ language = "ru" }) => {
                             deleteTxtReport={deleteTxtReport}
                             deleteAllWordReports={deleteAllWordReports}
                             clearAllReports={clearAllReports}
+                            openReportViewer={openReportViewer}
 
                             language={language}
                         />
@@ -529,6 +584,15 @@ const Search = ({ language = "ru" }) => {
                     />
                 </div>
             </div>
+
+            {viewerOpen && (
+                <ReportViewer
+                    filename={viewerData.filename}
+                    reportType={viewerData.reportType}
+                    onClose={closeReportViewer}
+                    language={language}
+                />
+            )}
         </main>
     );
 };

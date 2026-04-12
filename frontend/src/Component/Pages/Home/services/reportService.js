@@ -96,6 +96,20 @@ export const reportService = {
         return await response.json();
     },
 
+    async getReportContent(filename, reportType = 'json') {
+        try {
+            const response = await fetch(
+                `http://localhost:8000/api/get-report-content?filename=${encodeURIComponent(filename)}&report_type=${reportType}`
+            );
+            if (!response.ok) throw new Error(`Ошибка при загрузке отчета: ${response.statusText}`);
+            const data = await response.text();
+            return data;
+        } catch (error) {
+            console.error('Ошибка при загрузке содержимого отчета:', error);
+            throw error;
+        }
+    },
+
     _downloadBlob(blob, filename) {
         try {
             const url = window.URL.createObjectURL(blob);
