@@ -810,13 +810,13 @@ class CombinedReport:
             return ""
 
         # Определяем путь к TXT файлу
-        if txt_file_path is None:
+        if txt_file_path is None or not txt_file_path:
             txt_file_path = self.txt_dir / f"{self.filename_base}.txt"
         else:
             txt_file_path = Path(txt_file_path)
 
-        if not txt_file_path.exists():
-            print(f"[!] TXT файл не найден: {txt_file_path}")
+        if not txt_file_path.exists() or txt_file_path.is_dir():
+            print(f"[!] TXT файл не найден или является директорией: {txt_file_path}")
             return ""
 
         # Проверяем размер файла
@@ -904,9 +904,9 @@ class CombinedReport:
         # Сохраняем TXT
         txt_path = self.save_txt(method=method)
 
-        # Сохраняем DOCX
+        # Сохраняем DOCX только если TXT файл был успешно создан
         docx_path = ""
-        if include_docx:
+        if include_docx and txt_path:
             docx_path = self.txt_to_docx(txt_path)
 
         return {
@@ -1021,7 +1021,7 @@ def create_combined_report_by_time(scan_id: str, start_time: datetime,
     txt_path = combined.save_txt(method=method)
     docx_path = ""
     
-    if include_docx:
+    if include_docx and txt_path:
         docx_path = combined.txt_to_docx(txt_path)
 
     return {
@@ -1058,7 +1058,7 @@ def quick_merge_all_reports(reports_base_dir: Optional[Path] = None,
     txt_path = combined.save_txt(method='line_by_line')
     docx_path = ""
     
-    if include_docx:
+    if include_docx and txt_path:
         docx_path = combined.txt_to_docx(txt_path)
 
     return {

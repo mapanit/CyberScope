@@ -445,7 +445,8 @@ z-index: 1000;
     min-width: 400px;
     max-width: 500px;
     box-sizing: border-box;
-
+    height: 278px;
+    overflow: auto;
     @media (max-width: 992px) {
       min-width: 100%;
       max-width: 100%;
