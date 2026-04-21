@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import "./Questions.scss";
+import "./Analytics.scss";
 
-const Questions = ({ language }) => {
+const Analytic = ({ language }) => {
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(null);
 
   const questions = [
@@ -83,4 +83,4 @@ const Questions = ({ language }) => {
   );
 };
 
-export default Questions;
+export default Analytic;

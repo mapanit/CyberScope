@@ -9,7 +9,7 @@ $accent: #06b6d4;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.4s;
   height: 34px;
-
+  z-index: 1000;
   .container {
     transition: all 0.4s;
     position: relative;
@@ -100,6 +100,22 @@ $accent: #06b6d4;
       .btn__login:hover {
         transform: scale(1.05);
         background: $text;
+      }
+
+      .btn__logout {
+        background: #e74c3c;
+        color: white;
+        padding: 8px 12px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.2s, color 0.2s;
+      }
+
+      .btn__logout:hover {
+        transform: scale(1.05);
+        background: darken(#e74c3c, 10%);
       }
     }
 

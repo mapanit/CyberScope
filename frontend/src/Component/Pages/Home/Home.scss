@@ -5,366 +5,506 @@ $text: #e6eef3;
 $muted: #98a2b3;
 $radius: 10px;
 
-.main__cyber {
+.container__cyber {
   position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+.section__cyber {
+  position: absolute;
   left: 0;
   right: 0;
-  top: 150px;
+  top: 0;
+  bottom: 0;
   padding: 40px 16px 40px 16px;
   width: 1200px;
-  margin: 0 auto;
+  margin: auto;
   background: rgba(0, 0, 0, 0.8); // Светлый фон для читаемости
   border-radius: 10px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-
-  .container {
-    display: block;
-  }
+  z-index: 1000;
+  height: 550px;
   .menu__container {
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  width: 100%;
-  transition: all 1s;
-  margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    width: 100%;
+    transition: all 1s;
 
-  .menu__home {
-    gap: 10px;
-    margin-bottom: 20px;
-    width: 90px;
-    transition: all 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
-    position: relative;
-    height: 50px;
-
-    .menu__btn {
-      background: black;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      color: $text;
-      padding: 8px 14px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-      position: absolute;
-      top: 0;
-      left: 0;
-      z-index: 100;
-      transform: scale(1) rotate(0deg);
-      backface-visibility: hidden;
-    }
-
-    .menu__btn:hover {
-      background-color: $accent;
-      transform: scale(1.08) rotate(-5deg);
-      box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);
-    }
-
-    .menu__active {
-      width: 100px;
+    .menu__home {
+      gap: 10px;
+      margin-bottom: 20px;
+      width: 90px;
       transition: all 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
-      position: absolute;
-      z-index: 0;
-      left: 0;
-      top: 0;
-      display: flex;
-      opacity: 0;
-      transform: scale(0.9) translateX(-20px);
-      backface-visibility: hidden;
+      position: relative;
+      height: 50px;
 
-
-      .menu__active-btn {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        color: $text;
-        padding: 5px 0px;
-        border-radius: 8px;
-        cursor: pointer;
-        font-weight: 600;
-        transition: all 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
-        width: 0px;
-        font-size: 0px;
-        position: relative;
-        opacity: 0;
-        transform: scale(0.7) rotate(-15deg);
-        backface-visibility: hidden;
-
-        
-
-        .tagging {
-          width: 10px;
-          height: 10px;
-          background: #ffffff;
-          position: absolute;
-          top: 10px;
-          right: 0px;
-          border-radius: 10px;
-          cursor: help;
-          transition: all 0.2s ease;
-
-          &:hover {
-            background: #06b6d4;
-            box-shadow: 0 0 8px rgba(6, 182, 212, 0.6);
-            transform: scale(1.2);
-          }
-
-          .tooltip {
-            position: absolute;
-            bottom: 130%;
-            right: 0;
-            background: rgba(11, 17, 32, 0.95);
-            border: 1px solid rgba(6, 182, 212, 0.5);
-            border-radius: 8px;
-            padding: 10px 12px;
-            width: 200px;
-            font-size: 12px;
-            color: #e6eef3;
-            z-index: 1000;
-            pointer-events: none;
-            white-space: normal;
-            animation: tooltipFade 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 12px rgba(6, 182, 212, 0.2);
-
-            p {
-              margin: 0;
-              line-height: 1.4;
-            }
-
-            &::after {
-              content: '';
-              position: absolute;
-              top: 100%;
-              right: 5px;
-              width: 0;
-              height: 0;
-              border-left: 5px solid transparent;
-              border-right: 5px solid transparent;
-              border-top: 5px solid rgba(11, 17, 32, 0.95);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  .menu__home.active {
-    width: 1185px;
-    overflow: visible;
-    animation: menuExpand 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
-
-    .menu__btn {
-      background-color: $accent;
-      transform: scale(1) rotate(-0deg);
-    }
-
-    .install__info {
-      height: 350px;
-    }
-
-    .menu__active {
-      width: 90%;
-      padding: 0px 0px 0px 100px;
-      opacity: 1;
-      transform: scale(1) translateX(0);
-
-      .menu__active-btn {
-        width: 100px;
-        margin: 0px 10px;
-        font-size: 14px;
-        background: transparent;
+      .menu__btn {
+        background: black;
         border: 1px solid rgba(255, 255, 255, 0.06);
         color: $text;
         padding: 8px 14px;
         border-radius: 8px;
         cursor: pointer;
         font-weight: 600;
-        transition: all 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
-        font-size: 14px;
-        opacity: 1;
+        transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+        position: absolute;
+        top: 0;
+        left: 0;
+        z-index: 100;
         transform: scale(1) rotate(0deg);
-        animation: buttonSlideIn 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
-        animation-fill-mode: both;
-        display: block;
-        pointer-events: auto;
+        backface-visibility: hidden;
+      }
 
-        // Показывать все инструменты 7+ при активном меню
+      .menu__btn:hover {
+        background-color: $accent;
+        transform: scale(1.08) rotate(-5deg);
+        box-shadow: 0 4px 15px rgba(6, 182, 212, 0.3);
+      }
 
+      .menu__active {
+        width: 100px;
+        transition: all 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+        position: absolute;
+        z-index: 0;
+        left: 0;
+        top: 0;
+        display: flex;
+        opacity: 0;
+        transform: scale(0.9) translateX(-20px);
+        backface-visibility: hidden;
 
-        .tagging {
-          width: 10px;
-          height: 10px;
-          background: #f7ba5e;
-          position: absolute;
-          top: -25px;
-          right: 0px;
-          border-radius: 10px;
-          transition: all 1.3s;
-          cursor: help;
+        .menu__active-btn {
+          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          color: $text;
+          padding: 5px 0px;
+          border-radius: 8px;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
+          width: 0px;
+          font-size: 0px;
+          position: relative;
+          opacity: 0;
+          transform: scale(0.7) rotate(-15deg);
+          backface-visibility: hidden;
 
-          &:hover {
-            background: #ffd789;
-            box-shadow: 0 0 8px rgba(247, 186, 94, 0.6);
-            transform: scale(1.2);
-          }
-
-          .tooltip {
+          .tagging {
+            width: 10px;
+            height: 10px;
+            background: #ffffff;
             position: absolute;
-            bottom: 130%;
-            right: 0;
-            background: rgba(11, 17, 32, 0.95);
-            border: 1px solid rgba(247, 186, 94, 0.5);
-            border-radius: 8px;
-            padding: 10px 12px;
-            width: 200px;
-            font-size: 12px;
-            color: #e6eef3;
-            z-index: 1000;
-            pointer-events: none;
-            white-space: normal;
-            animation: tooltipFade 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 12px rgba(247, 186, 94, 0.2);
+            top: 10px;
+            right: 0px;
+            border-radius: 10px;
+            cursor: help;
+            transition: all 0.2s ease;
 
-            p {
-              margin: 0;
-              line-height: 1.4;
+            &:hover {
+              background: #06b6d4;
+              box-shadow: 0 0 8px rgba(6, 182, 212, 0.6);
+              transform: scale(1.2);
             }
 
-            &::after {
-              content: '';
+            .tooltip {
               position: absolute;
-              top: 100%;
-              right: 5px;
-              width: 0;
-              height: 0;
-              border-left: 5px solid transparent;
-              border-right: 5px solid transparent;
-              border-top: 5px solid rgba(11, 17, 32, 0.95);
+              bottom: 130%;
+              right: 0;
+              background: rgba(11, 17, 32, 0.95);
+              border: 1px solid rgba(6, 182, 212, 0.5);
+              border-radius: 8px;
+              padding: 10px 12px;
+              width: 200px;
+              font-size: 12px;
+              color: #e6eef3;
+              z-index: 1000;
+              pointer-events: none;
+              white-space: normal;
+              animation: tooltipFade 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+              box-shadow: 0 4px 12px rgba(6, 182, 212, 0.2);
+
+              p {
+                margin: 0;
+                line-height: 1.4;
+              }
+
+              &::after {
+                content: "";
+                position: absolute;
+                top: 100%;
+                right: 5px;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid rgba(11, 17, 32, 0.95);
+              }
             }
           }
-
-        }
-
-        &:hover {
-          background-color: $accent;
-          transform: scale(1.05) rotate(3deg);
-          box-shadow: 0 4px 16px rgba(6, 182, 212, 0.25);
-        }
-
-        &.active {
-          background-color: #0b12204b;
-          border-color: #e6eef3;
-          color: #ffffff;
         }
       }
-       &:nth-child(n+5) {
+    }
+
+    .menu__home.active {
+      width: 1185px;
+      overflow: visible;
+      animation: menuExpand 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+      .menu__btn {
+        background-color: $accent;
+        transform: scale(1) rotate(-0deg);
+      }
+
+      .install__info {
+        height: 350px;
+      }
+
+      .menu__active {
+        width: 90%;
+        padding: 0px 0px 0px 100px;
+        opacity: 1;
+        transform: scale(1) translateX(0);
+
+        .menu__active-btn {
+          width: 100px;
+          margin: 0px 10px;
+          font-size: 14px;
+          background: transparent;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          color: $text;
+          padding: 8px 14px;
+          border-radius: 8px;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
+          font-size: 14px;
+          opacity: 1;
+          transform: scale(1) rotate(0deg);
+          animation: buttonSlideIn 0.85s cubic-bezier(0.34, 1.56, 0.64, 1);
+          animation-fill-mode: both;
+          display: block;
+          pointer-events: auto;
+
+          // Показывать все инструменты 7+ при активном меню
+
+          .tagging {
+            width: 10px;
+            height: 10px;
+            background: #f7ba5e;
+            position: absolute;
+            top: -25px;
+            right: 0px;
+            border-radius: 10px;
+            transition: all 1.3s;
+            cursor: help;
+
+            &:hover {
+              background: #ffd789;
+              box-shadow: 0 0 8px rgba(247, 186, 94, 0.6);
+              transform: scale(1.2);
+            }
+
+            .tooltip {
+              position: absolute;
+              bottom: 130%;
+              right: 0;
+              background: rgba(11, 17, 32, 0.95);
+              border: 1px solid rgba(247, 186, 94, 0.5);
+              border-radius: 8px;
+              padding: 10px 12px;
+              width: 200px;
+              font-size: 12px;
+              color: #e6eef3;
+              z-index: 1000;
+              pointer-events: none;
+              white-space: normal;
+              animation: tooltipFade 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+              box-shadow: 0 4px 12px rgba(247, 186, 94, 0.2);
+
+              p {
+                margin: 0;
+                line-height: 1.4;
+              }
+
+              &::after {
+                content: "";
+                position: absolute;
+                top: 100%;
+                right: 5px;
+                width: 0;
+                height: 0;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid rgba(11, 17, 32, 0.95);
+              }
+            }
+          }
+
+          &:hover {
+            background-color: $accent;
+            transform: scale(1.05) rotate(3deg);
+            box-shadow: 0 4px 16px rgba(6, 182, 212, 0.25);
+          }
+
+          &.active {
+            background-color: #0b12204b;
+            border-color: #e6eef3;
+            color: #ffffff;
+          }
+        }
+        &:nth-child(n + 5) {
           display: none;
           opacity: 0;
           pointer-events: none;
         }
+      }
     }
-  }
 
-  .btn__container {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100px;
-    position: relative;
-
-    .schedule__scanner-btn {
-      background: rgba(0, 0, 0, 0.425);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      width: 0px;
-      height: 0px;
+    .btn__container {
       display: flex;
-      flex-direction: column;
-      justify-content: center;
+      justify-content: space-between;
       align-items: center;
-      gap: 5px;
-      position: absolute;
-      top: 0;
-      left: 0;
+      width: 100px;
+      position: relative;
 
-      .btn__clock {
+      .schedule__scanner-btn {
+        background: rgba(0, 0, 0, 0.425);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         width: 0px;
         height: 0px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 5px;
+        position: absolute;
+        top: 0;
+        left: 0;
+
+        .btn__clock {
+          width: 0px;
+          height: 0px;
+        }
       }
-    }
 
-    .btn__menu-active {
-      background: rgba(0, 0, 0, 0.425);
-      border: 1px solid rgba(255, 255, 255, 0.06);
-      color: $text;
-      padding: 8px 14px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      width: 40px;
-      height: 40px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      gap: 5px;
-      position: absolute;
-      top: 0;
-      right: 0;
-
-      .line {
-        display: block;
-        width: 20px;
-        height: 2px;
-        background-color: #ffffff;
+      .btn__menu-active {
+        background: rgba(0, 0, 0, 0.425);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        color: $text;
+        padding: 8px 14px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        border-radius: 1px;
-      }
+        width: 40px;
+        height: 40px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 5px;
+        position: absolute;
+        top: 0;
+        right: 0;
 
-      .line:nth-child(1) {
-        transform: translateY(0) rotate(0deg);
-      }
-
-      .line:nth-child(2) {
-        transform: translateY(0) rotate(deg);
-      }
-
-      &:hover {
-        background-color: rgba(6, 182, 212, 0.15);
-        border-color: $accent;
-        transform: scale(1.05);
-      }
-
-      &.active {
-        background-color: rgba(6, 182, 212, 0.25);
-        border-color: $accent;
+        .line {
+          display: block;
+          width: 20px;
+          height: 2px;
+          background-color: #ffffff;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          border-radius: 1px;
+        }
 
         .line:nth-child(1) {
-          transform: translateY(3px) rotate(45deg);
+          transform: translateY(0) rotate(0deg);
         }
 
         .line:nth-child(2) {
-          transform: translateY(-5px) rotate(-45deg);
+          transform: translateY(0) rotate(deg);
+        }
+
+        &:hover {
+          background-color: rgba(6, 182, 212, 0.15);
+          border-color: $accent;
+          transform: scale(1.05);
+        }
+
+        &.active {
+          background-color: rgba(6, 182, 212, 0.25);
+          border-color: $accent;
+
+          .line:nth-child(1) {
+            transform: translateY(3px) rotate(45deg);
+          }
+
+          .line:nth-child(2) {
+            transform: translateY(-5px) rotate(-45deg);
+          }
         }
       }
     }
   }
 
+  .search__container {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
 
+    .container__reports {
+      display: flex;
+      align-items: start;
+      flex-direction: column;
+    }
+
+    width: 100%;
+    gap: 20px;
+    box-sizing: border-box;
+
+    @media (max-width: 992px) {
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .form__search {
+      background: linear-gradient(
+        180deg,
+        $card 0%,
+        rgba(11, 17, 32, 0.85) 100%
+      );
+      padding: 18px;
+      border-radius: $radius;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+      flex: 0 0 auto;
+      width: 450px;
+      box-sizing: border-box;
+      height: 235px;
+      overflow: auto;
+      @media (max-width: 992px) {
+        min-width: 100%;
+        max-width: 100%;
+        width: 100%;
+      }
+
+      @media (max-width: 576px) {
+        padding: 12px;
+      }
+    }
+
+    .results {
+      width: 100%;
+      padding: 16px;
+      background: rgba(6, 182, 212, 0.05);
+      border-radius: 8px;
+      color: #e6eef3;
+      box-sizing: border-box;
+      max-height: 500px;
+      overflow-y: auto;
+      overflow-x: hidden;
+
+      @media (max-width: 576px) {
+        padding: 12px;
+        max-height: 400px;
+      }
+
+      h3 {
+        margin-top: 0;
+        margin-bottom: 16px;
+        font-size: 18px;
+        color: #e6eef3;
+        font-weight: 600;
+      }
+
+      .combined-reports-links {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+
+        .report-link {
+          background: rgba(255, 255, 255, 0.1);
+          color: #e6eef3;
+          padding: 8px 14px;
+          border-radius: 8px;
+          text-decoration: none;
+          font-size: 14px;
+          font-weight: 500;
+          transition: all 0.2s ease;
+
+          &:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+          }
+        }
+      }
+    }
+
+    .install__info {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      height: 240px;
+      overflow: hidden;
+      overflow-y: auto;
+      width: 100%;
+      padding-right: 10px;
+      .h6 {
+        color: $muted;
+        font-size: 14px;
+        margin-bottom: 8px;
+        font-weight: 500;
+      }
+
+      .help__link {
+        color: $accent;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        margin-bottom: 12px;
+        display: inline-block;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+
+      .btn__install-info {
+        background: rgba(40, 167, 69, 0.9);
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        width: 100%;
+
+        &:hover:not(:disabled) {
+          background-color: #218838;
+          transform: translateY(-2px);
+        }
+
+        &:disabled {
+          background-color: #6c757d;
+          cursor: not-allowed;
+          opacity: 0.7;
+        }
+      }
+    }
+  }
 }
 
-}
-
-.main__cyber.active {
+.section__cyber.active {
   min-height: 650px;
   width: 1700px;
   animation: slideInDown 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  margin: 0 auto;
-  top: 100px;
 
-  .container {
+  .container__cyber {
     width: 90%;
     margin: 0 auto;
   }
@@ -413,147 +553,16 @@ $radius: 10px;
   .menu__container .menu__home.active .menu__active {
     width: 105%;
   }
- 
-}
-
-.search__container {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-
-  .container__reports {
-    display: flex;
-    align-items: start;
-    flex-direction: column;
-  }
-
-  width: 100%;
-  gap: 20px;
-  box-sizing: border-box;
-
-  @media (max-width: 992px) {
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .form__search {
-    background: linear-gradient(180deg, $card 0%, rgba(11, 17, 32, 0.85) 100%);
-    padding: 18px;
-    border-radius: $radius;
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    flex: 0 0 auto;
-    min-width: 400px;
-    max-width: 500px;
-    box-sizing: border-box;
-
-    @media (max-width: 992px) {
-      min-width: 100%;
-      max-width: 100%;
-      width: 100%;
+  .search__container {
+    .form__search {
+      width: 450px;
+      height: 280px;
     }
-
-    @media (max-width: 576px) {
-      padding: 12px;
+    .results {
+      max-height: 600px;
     }
-  }
-
-  .results {
-    width: 100%;
-    padding: 16px;
-    background: rgba(6, 182, 212, 0.05);
-    border-radius: 8px;
-    color: #e6eef3;
-    box-sizing: border-box;
-    max-height: 550px;
-    overflow-y: auto;
-    overflow-x: hidden;
-
-    @media (max-width: 576px) {
-      padding: 12px;
-      max-height: 400px;
-    }
-
-    h3 {
-      margin-top: 0;
-      margin-bottom: 16px;
-      font-size: 18px;
-      color: #e6eef3;
-      font-weight: 600;
-    }
-
-    .combined-reports-links {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 16px;
-
-      .report-link {
-        background: rgba(255, 255, 255, 0.1);
-        color: #e6eef3;
-        padding: 8px 14px;
-        border-radius: 8px;
-        text-decoration: none;
-        font-size: 14px;
-        font-weight: 500;
-        transition: all 0.2s ease;
-
-        &:hover {
-          background-color: rgba(255, 255, 255, 0.2);
-          transform: translateY(-2px);
-        }
-      }
-    }
-  }
-
-  .install__info {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    height: 250px;
-    overflow: hidden;
-    overflow-y: auto;
-    width: 100%;
-
-    .h6 {
-      color: $muted;
-      font-size: 14px;
-      margin-bottom: 8px;
-      font-weight: 500;
-    }
-
-    .help__link {
-      color: $accent;
-      text-decoration: none;
-      font-size: 14px;
-      font-weight: 500;
-      margin-bottom: 12px;
-      display: inline-block;
-
-      &:hover {
-        text-decoration: underline;
-      }
-    }
-
-    .btn__install-info {
-      background: rgba(40, 167, 69, 0.9);
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      transition: all 0.2s ease;
-      width: 100%;
-
-      &:hover:not(:disabled) {
-        background-color: #218838;
-        transform: translateY(-2px);
-      }
-
-      &:disabled {
-        background-color: #6c757d;
-        cursor: not-allowed;
-        opacity: 0.7;
-      }
+    .install__info {
+      height: 275px;
     }
   }
 }
@@ -569,7 +578,6 @@ $radius: 10px;
     width: 100%;
   }
 }
-
 
 // Улучшенные стили для читаемости результатов
 .result-section {
@@ -625,7 +633,9 @@ $radius: 10px;
   overflow-x: auto;
   white-space: pre-wrap;
   word-wrap: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family:
+    "JetBrains Mono", "Fira Code", "Consolas", "Monaco", "Courier New",
+    monospace;
   color: #cbd5e1;
   margin: 0;
 
@@ -731,7 +741,9 @@ $radius: 10px;
   margin-bottom: 12px;
   border-radius: 6px;
   border-left: 4px solid #ccc;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
 
   &:hover {
     transform: translateY(-2px);
@@ -902,7 +914,9 @@ $radius: 10px;
   font-size: 12px;
   max-height: 200px;
   overflow-y: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family:
+    "JetBrains Mono", "Fira Code", "Consolas", "Monaco", "Courier New",
+    monospace;
   white-space: pre-wrap;
   word-wrap: break-word;
   line-height: 1.5;
@@ -976,9 +990,6 @@ $radius: 10px;
   }
 }
 
-
-
-
 .form__search {
   label {
     display: block;
@@ -1002,7 +1013,9 @@ $radius: 10px;
   background: transparent;
   color: $text;
   outline: none;
-  transition: box-shadow .12s ease, border-color .12s ease;
+  transition:
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .form__row input::placeholder {
@@ -1010,7 +1023,7 @@ $radius: 10px;
 }
 
 .form__row input:focus {
-  border-color: rgba($accent, .85);
+  border-color: rgba($accent, 0.85);
   box-shadow: 0 4px 18px rgba(6, 182, 212, 0.06);
 }
 
@@ -1022,13 +1035,12 @@ $radius: 10px;
   border: none;
   font-weight: 700;
   cursor: pointer;
-  transition: transform .08s ease;
+  transition: transform 0.08s ease;
 }
 
 .form__btn:hover {
   transform: translateY(-2px);
 }
-
 
 // Стили для tool-result
 .tool-result {
@@ -1131,7 +1143,9 @@ $radius: 10px;
     margin: 0;
     font-size: 11px;
     color: #000000;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-family:
+      "JetBrains Mono", "Fira Code", "Consolas", "Monaco", "Courier New",
+      monospace;
     white-space: pre-wrap;
     word-wrap: break-word;
     line-height: 1.4;
@@ -1140,7 +1154,7 @@ $radius: 10px;
   .vulnerabilities-list {
     margin-top: 8px;
 
-    >div {
+    > div {
       margin-left: 16px;
       font-size: 12px;
       color: #ffffff;

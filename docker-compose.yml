@@ -1,20 +1,37 @@
-version: '3.9'
-
 services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.api
     container_name: cyberscope-backend
-    ports:
-      - "8000:8000"
+    network_mode: "host"
     volumes:
       - ./backend:/app
+      - ./backend/reports:/app/reports
     environment:
       - PYTHONUNBUFFERED=1
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
-    networks:
-      - cyberscope-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    
+
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.bot
+    container_name: cyberscope-bot
+    volumes:
+      - ./backend:/app        
+      - ./backend/reports:/app/reports
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_BASE_URL=http://localhost:8000/api
+    depends_on:
+      - backend
+    network_mode: host
+    restart: on-failure
 
   frontend:
     build:
@@ -26,9 +43,11 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
+      - ./frontend/node_modules:/app/node_modules
     environment:
       - REACT_APP_API_URL=http://localhost:8000
       - NODE_ENV=development
+      - WATCHPACK_POLLING=true
     depends_on:
       - backend
     networks:

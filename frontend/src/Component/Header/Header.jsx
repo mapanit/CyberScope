@@ -1,10 +1,33 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
 import "./Header.scss";
 
 const Header = ({
   toggleLanguage,
   language,
 }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+
+  useEffect(() => {
+    const user = JSON.parse(localStorage.getItem("currentUser") || "null");
+    if (user) {
+      setIsLoggedIn(true);
+      setCurrentUser(user);
+    } else {
+      setIsLoggedIn(false);
+      setCurrentUser(null);
+    }
+  }, [location]); // Обновлять при изменении маршрута
+
+  const handleLogout = () => {
+    localStorage.removeItem("currentUser");
+    setIsLoggedIn(false);
+    setCurrentUser(null);
+    navigate("/login");
+  };
 
 
 
@@ -18,8 +41,8 @@ const Header = ({
           <NavLink to="/questions" className="a" activeClassName="active">
             {language === "ru" ? "Вопросы" : "Questions"}
           </NavLink>
-          <NavLink to="/task" className="a" activeClassName="active">
-            {language === "ru" ? "Цель" : "Task"}
+          <NavLink to="/Analytic" className="a" activeClassName="active">
+            {language === "ru" ? "Аналитика" : "Analytic"}
           </NavLink>
           <NavLink to="/" className="a" activeClassName="active">
             CyberScope
@@ -30,9 +53,15 @@ const Header = ({
           <button className="btn__language" onClick={toggleLanguage}>
             {language === "ru" ? "English" : "Русский"}
           </button>
-          <NavLink to="/user" className="btn__login">
-            {language === "ru" ? "Войти" : "Login"}
-          </NavLink>
+          {isLoggedIn ? (
+            <button className="btn__logout" onClick={handleLogout}>
+              {language === "ru" ? "Выйти" : "Logout"}
+            </button>
+          ) : (
+            <NavLink to="/login" className="btn__login">
+              {language === "ru" ? "Войти" : "Login"}
+            </NavLink>
+          )}
         </div>
       </div>
     </header>
