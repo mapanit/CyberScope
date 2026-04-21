@@ -22,6 +22,8 @@ RUN go install github.com/tomnomnom/waybackurls@latest
 RUN go install github.com/OJ/gobuster/v3@latest 
 RUN cp /root/go/bin/* /usr/local/bin/
 
+ENV PATH="/root/go/bin:$PATH"
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

@@ -45,7 +45,7 @@ class ReportBase(ABC):
 
         # Настройка директорий
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -101,7 +101,7 @@ class CombinedReport:
         self.scan_datetime = datetime.now().isoformat()
 
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -144,7 +144,7 @@ class CombinedReport:
             Dict с путями к TXT файлам для каждого инструмента
         """
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -214,7 +214,7 @@ class CombinedReport:
             Dict с путями к TXT файлам для каждого инструмента
         """
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 

@@ -1,7 +1,7 @@
 import React from "react";
-import "./Task.scss";
+import "./Analytic.scss";
 
-const Task = ({ language }) => {
+const Analytic = ({ language }) => {
   return (
     <main className="main">
       <div className="container">
@@ -20,4 +20,4 @@ const Task = ({ language }) => {
   );
 };
 
-export default Task;
+export default Analytic;

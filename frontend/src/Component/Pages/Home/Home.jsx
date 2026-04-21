@@ -486,8 +486,8 @@ const Search = ({ language = "ru" }) => {
     };
 
     return (
-        <main className={activeMenu ? "main__cyber active" : "main__cyber"}>
-            <div className="container">
+        <section className='container__cyber'>
+            <div className={activeMenu ? "section__cyber active" : "section__cyber"}>
                 <div className="menu__container">
                     <div className={btn ? "menu__home active" : "menu__home"}>
                         <button
@@ -593,7 +593,7 @@ const Search = ({ language = "ru" }) => {
                     language={language}
                 />
             )}
-        </main>
+        </section>
     );
 };
 

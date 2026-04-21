@@ -14,7 +14,7 @@ import Search from "./Component/Pages/Home/Home";
 import Footer from "./Component/Footer/Footer";
 import AboutTools from "./Component/Pages/AboutTools/AboutTools";
 import Questions from "./Component/Pages/Questions/Questions";
-import Task from "./Component/Pages/Task/Task";
+import Analytic from "./Component/Pages/Analytics/Analytic";
 import Modal from "./Component/Modal/Modal";
 import Help from "./Component/Pages/Help/Help";
 import ProjectDashboard from "./Component/Pages/ProjectDashboard/ProjectDashboard";
@@ -135,10 +135,10 @@ function App() {
             }
           />
           <Route
-            path="/task"
+            path="/Analytic"
             element={
               <AnimatedPage>
-                <Task language={language} />
+                <Analytic language={language} />
               </AnimatedPage>
             }
           />

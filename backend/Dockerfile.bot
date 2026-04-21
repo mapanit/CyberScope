@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Установка системных зависимостей (для сетевых подключений)
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установка Python зависимостей
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Копирование всего кода
+COPY . .
+
+# Создание директории для отчетов
+RUN mkdir -p /app/reports/combined/json /app/reports/combined/txt
+
+# Команда запуска бота
+CMD ["python", "bot/bot.py"]

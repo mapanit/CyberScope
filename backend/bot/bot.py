@@ -8,15 +8,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart, StateFilter
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
-REPORTS_DIR = Path(__file__).parent.parent / "reports" / "combined"
+
+if os.path.exists("/app/reports/combined"):
+    REPORTS_DIR = Path("/app/reports/combined")
+else:
+    REPORTS_DIR = Path(__file__).parent.parent / "reports" / "combined"
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
@@ -54,15 +57,35 @@ class ScanForm(StatesGroup):
 class ReportForm(StatesGroup):
     viewing_reports = State()
 
+
+def get_main_keyboard():
+    """Получить главную клавиатуру"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text='🔍 Сканирование'), KeyboardButton(text='📥 Отчеты')],
+            [KeyboardButton(text='❓ Справка'), KeyboardButton(text='⚙️ Статус')]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+
+def get_back_keyboard():
+    """Получить клавиатуру возврата в главное меню"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text='🏠 Главное меню')],
+            [KeyboardButton(text='❌ Отмена')]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
+
+
 # Обработчик команды /start
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Начать сканирование", callback_data="start_scan")],
-        [InlineKeyboardButton(text="� Скачать отчеты", callback_data="download_menu")],
-        [InlineKeyboardButton(text="❓ Справка", callback_data="help_info")]
-    ])
-    
+    keyboard = get_main_keyboard()
     await message.answer(
         f"Привет, {message.from_user.first_name}! 👋\n\n"
         "Я CyberScope бот для сканирования безопасности.\n\n"
@@ -100,22 +123,136 @@ async def cmd_help(message: Message):
 4. Дождитесь завершения
 5. Скачайте отчет
     """
-    await message.answer(help_text, parse_mode="Markdown")
+    keyboard = get_main_keyboard()
+    await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+# Обработчик текстовых кнопок
+@dp.message(F.text == "🔍 Сканирование")
+async def handle_scan_button(message: Message, state: FSMContext):
+    """Обработчик кнопки 'Сканирование'"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Начать сканирование", callback_data="start_scan")],
+        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+    ])
+    
+    await message.answer(
+        "🔍 *Сканирование*\n\n"
+        "Выберите действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+
+@dp.message(F.text == "📥 Отчеты")
+async def handle_reports_button(message: Message):
+    """Обработчик кнопки 'Отчеты'"""
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 JSON отчеты", callback_data="list_json")],
+        [InlineKeyboardButton(text="📝 TXT отчеты", callback_data="list_txt")],
+        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+    ])
+    
+    await message.answer(
+        "📥 *Скачивание отчетов*\n\n"
+        "Выберите формат:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+
+@dp.message(F.text == "❓ Справка")
+async def handle_help_button(message: Message):
+    """Обработчик кнопки 'Справка'"""
+    help_text = """
+📋 *Доступные команды:*
+
+/start - главное меню
+/help - справка
+/scan - быстрое сканирование
+/list_json - список JSON отчетов
+/list_txt - список TXT отчетов
+/cancel - отмена операции
+
+*Функциональность:*
+🔍 Запуск сканирования через API
+📥 Скачивание отчетов (JSON, TXT)
+📊 Просмотр доступных отчетов
+
+*Отчеты:*
+Отчеты автоматически ищутся в папке:
+`reports/combined/json/` - JSON отчеты
+`reports/combined/txt/` - TXT отчеты
+    """
+    
+    keyboard = get_main_keyboard()
+    await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+@dp.message(F.text == "⚙️ Статус")
+async def handle_status_button(message: Message):
+    """Обработчик кнопки 'Статус'"""
+    active_scans_count = len(active_scans)
+    json_files = get_reports_by_type("json")
+    txt_files = get_reports_by_type("txt")
+    
+    status_text = f"""
+⚙️ *Статус системы*
+
+🤖 Бот: ✅ Онлайн
+📁 Папка отчетов: ✅ {REPORTS_DIR}
+🔄 Активных сканирований: {active_scans_count}
+
+📊 *Статистика отчетов:*
+📄 JSON отчетов: {len(json_files)}
+📝 TXT отчетов: {len(txt_files)}
+
+🔗 API: {API_BASE_URL}
+    """
+    
+    keyboard = get_main_keyboard()
+    await message.answer(status_text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 # Обработчик команды /cancel
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Операция отменена.")
+    keyboard = get_main_keyboard()
+    await message.answer("❌ Операция отменена.", reply_markup=keyboard)
+
+
+# Обработчик кнопки "🏠 Главное меню"
+@dp.message(F.text == "🏠 Главное меню")
+async def handle_main_menu_button(message: Message, state: FSMContext):
+    """Обработчик кнопки 'Главное меню'"""
+    await state.clear()
+    keyboard = get_main_keyboard()
+    await message.answer(
+        "🏠 *Главное меню*\n\n"
+        "Выберите действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+
+# Обработчик кнопки "❌ Отмена"
+@dp.message(F.text == "❌ Отмена")
+async def handle_cancel_button(message: Message, state: FSMContext):
+    """Обработчик кнопки 'Отмена'"""
+    await state.clear()
+    keyboard = get_main_keyboard()
+    await message.answer("❌ Операция отменена.", reply_markup=keyboard)
 
 
 # Обработчик callback - начать сканирование
 @dp.callback_query(F.data == "start_scan")
 async def process_start_scan(callback: types.CallbackQuery, state: FSMContext):
+    keyboard = get_back_keyboard()
     await callback.message.answer(
         "📍 Введите цель сканирования:\n"
-        "(например: example.com или http://example.com:5000)"
+        "(например: example.com или http://example.com:5000)",
+        reply_markup=keyboard
     )
     await state.set_state(ScanForm.target)
     await callback.answer()
@@ -240,7 +377,7 @@ async def run_scan(message: Message, target: str, tools: str, scan_id: str, stat
             params = {
                 "target": target,
                 "tools": tools,
-                "allow_internal": True
+                "allow_internal": "true"
             }
             
             async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=3600)) as resp:
@@ -264,17 +401,22 @@ async def run_scan(message: Message, target: str, tools: str, scan_id: str, stat
                         [InlineKeyboardButton(text="🔍 Новое сканирование", callback_data="start_scan")]
                     ])
                     
+                    main_keyboard = get_main_keyboard()
                     await message.answer(report_text, reply_markup=keyboard, parse_mode="Markdown")
+                    await message.answer("Выберите дальнейшее действие:", reply_markup=main_keyboard)
                     await state.clear()
                 else:
-                    await message.answer(f"❌ Ошибка сканирования: {resp.status}")
+                    keyboard = get_main_keyboard()
+                    await message.answer(f"❌ Ошибка сканирования: {resp.status}", reply_markup=keyboard)
                     await state.clear()
     except asyncio.TimeoutError:
-        await message.answer("⏱️ Превышено время ожидания сканирования. Попробуйте позже.")
+        keyboard = get_main_keyboard()
+        await message.answer("⏱️ Превышено время ожидания сканирования. Попробуйте позже.", reply_markup=keyboard)
         await state.clear()
     except Exception as e:
         logger.error(f"Ошибка при сканировании: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)}")
+        keyboard = get_main_keyboard()
+        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=keyboard)
         await state.clear()
 
 
@@ -398,6 +540,10 @@ async def download_report(callback: types.CallbackQuery):
             parse_mode="Markdown"
         )
         
+        # Добавляем клавиатуру навигации после скачивания
+        keyboard = get_main_keyboard()
+        await callback.message.answer("Выберите дальнейшее действие:", reply_markup=keyboard)
+        
         logger.info(f"Файл скачан: {filename} пользователем {callback.from_user.id}")
         
     except Exception as e:
@@ -408,22 +554,28 @@ async def download_report(callback: types.CallbackQuery):
 # Обработчик просмотра отчетов (старый)
 @dp.callback_query(F.data == "view_reports")
 async def process_view_reports(callback: types.CallbackQuery, state: FSMContext):
-    await download_menu(callback)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 JSON отчеты", callback_data="list_json")],
+        [InlineKeyboardButton(text="📝 TXT отчеты", callback_data="list_txt")],
+        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+    ])
+    
+    await callback.message.edit_text(
+        "📥 *Меню скачивания отчетов*\n\n"
+        "Выберите формат отчета:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 
 
 # Стартовое меню
 @dp.callback_query(F.data == "start_menu")
 async def process_start_menu(callback: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Начать сканирование", callback_data="start_scan")],
-        [InlineKeyboardButton(text="� Скачать отчеты", callback_data="download_menu")],
-        [InlineKeyboardButton(text="❓ Справка", callback_data="help_info")]
-    ])
-    
-    await callback.message.edit_text(
-        "🏠 *Главное меню*\n\n"
-        "Выберите действие:",
+    keyboard = get_main_keyboard()
+    await callback.message.answer(
+        "🏠 *Главное меню*",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -433,7 +585,21 @@ async def process_start_menu(callback: types.CallbackQuery):
 # Кнопка "Назад" в главное меню
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: types.CallbackQuery):
-    await process_start_menu(callback)
+    keyboard = get_main_keyboard()
+    await callback.message.edit_text(
+        "🏠 *Главное меню*\n\n"
+        "Выберите действие:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[])  # Очищаем inline кнопки
+    )
+    
+    # Отправляем новое сообщение с клавиатурой
+    await callback.message.answer(
+        "🏠 *Главное меню*\n\n"
+        "Выберите действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 
 # Справка через callback
@@ -506,9 +672,9 @@ async def cmd_list_txt(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
-@dp.errors()
-async def error_handler(update: types.Update, exception: Exception):
-    logger.error(f"Произошла ошибка: {exception}")
+@dp.error()
+async def error_handler(update: types.Update):
+    logger.error(f"Произошла ошибка при обработке update")
     return True
 
 # Запуск бота

@@ -41,8 +41,8 @@ const Header = ({
           <NavLink to="/questions" className="a" activeClassName="active">
             {language === "ru" ? "Вопросы" : "Questions"}
           </NavLink>
-          <NavLink to="/task" className="a" activeClassName="active">
-            {language === "ru" ? "Цель" : "Task"}
+          <NavLink to="/Analytic" className="a" activeClassName="active">
+            {language === "ru" ? "Аналитика" : "Analytic"}
           </NavLink>
           <NavLink to="/" className="a" activeClassName="active">
             CyberScope
