@@ -18,3 +18,5 @@ python-dotenv
 aiohttp
 aiogram
 nvdlib
+cryptography
+pyOpenSSL

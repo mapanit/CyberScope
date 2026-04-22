@@ -1,743 +1,685 @@
 #!/usr/bin/env python3
 """
-Nmap Port Scanner - Автоматизированное сканирование портов и сервисов
-Определяет открытые порты, версии сервисов и выполняет поиск известных CVE
-Сохраняет отчеты в JSON и TXT форматах
+Nmap Port Scanner - Расширенное сетевое сканирование с NSE скриптами и CVE API
+Отчеты в JSON, TXT и WORD форматах (БЕЗ КЭШИРОВАНИЯ В БД)
 """
 
-import nmap
 import json
 import requests
-import re
 import sys
 import os
+import time
+import argparse
+import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from colorama import Fore, Style, init
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-try:
-    import nvdlib
-    NVDLIB_AVAILABLE = True
-except ImportError:
-    NVDLIB_AVAILABLE = False
-from core.report_utils import ReportBase
+from dataclasses import dataclass
+from enum import Enum
 
-# Инициализация цветного вывода
+try:
+    from core.report_utils import ReportBase
+except ImportError:
+    ReportBase = object
+
+try:
+    import nmap
+    HAS_NMAP = True
+except ImportError:
+    HAS_NMAP = False
+
+try:
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
 init(autoreset=True)
 
-# Кеш для CVE поисков (потокобезопасный)
-CVE_CACHE = {}
-CVE_CACHE_LOCK = threading.Lock()
+MAX_CVE_PER_SERVICE = 10
+REQUEST_TIMEOUT = 10
+MAX_WORKERS = 10
+RATE_LIMIT_LOCK = threading.Lock()
 
+class Severity(Enum):
+    CRITICAL = "Critical"
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low"
+    UNKNOWN = "Unknown"
+
+@dataclass
+class CVEInfo:
+    """Информация о CVE уязвимости"""
+    cve_id: str
+    severity: str
+    cvss_score: float
+    description: str
+    published_date: str
+    exploit_maturity: str = "Unknown"
+    remediation: str = ""
+    references: List[str] = None
+    
+    def __post_init__(self):
+        if self.references is None:
+            self.references = []
 
 class CVESearcher:
-    """Класс для поиска CVE информации"""
+    """Расширенный поиск CVE - БЕЗ КЭШИРОВАНИЯ"""
     
-    @staticmethod
-    def search_cve(product: str, version: str = None) -> List[Dict[str, Any]]:
-        """
-        Поиск CVE для продукта и версии
+    def __init__(self, nvd_api_key: str = None):
+        self.nvd_api_key = nvd_api_key or os.environ.get('NVD_API_KEY')
+        self.request_count = 0
+        self.last_request_time = 0
         
-        Args:
-            product: Название продукта (apache, nginx, openssh и т.д.)
-            version: Версия продукта (опционально)
+    def _rate_limit(self):
+        """Ограничение частоты запросов к API"""
+        with RATE_LIMIT_LOCK:
+            self.request_count += 1
+            current_time = time.time()
             
-        Returns:
-            Список найденных CVE с информацией о них
-        """
-        cache_key = f"{product}:{version}" if version else product
-        
-        # Проверяем кеш потокобезопасным образом
-        with CVE_CACHE_LOCK:
-            if cache_key in CVE_CACHE:
-                return CVE_CACHE[cache_key]
-        
-        results = []
-        
-        try:
-            # Простой способ - ищем в известных CVE для популярных сервисов
-            results = CVESearcher._search_known_cves(product, version)
-            
-            # Если не найдено локально, пытаемся использовать API (опционально)
-            if not results:
-                results = CVESearcher._search_via_api(product, version)
-        
-        except Exception as e:
-            print(f"{Fore.YELLOW}[!] Ошибка поиска CVE для {product}: {e}")
-        
-        # Сохраняем в кеш потокобезопасно
-        with CVE_CACHE_LOCK:
-            CVE_CACHE[cache_key] = results
-        
-        return results
-    
-    @staticmethod
-    def _search_known_cves(product: str, version: str = None) -> List[Dict[str, Any]]:
-        """Поиск в известной базе CVE для популярных сервисов"""
-        
-        known_cves = {
-            'apache': [
-                {
-                    'product': 'Apache HTTP Server',
-                    'min_version': '2.4.0',
-                    'max_version': '2.4.49',
-                    'cve_id': 'CVE-2021-44790',
-                    'severity': 'High',
-                    'description': 'Buffer overflow in mod_lua and mod_jk of Apache HTTP Server'
-                },
-                {
-                    'product': 'Apache HTTP Server',
-                    'min_version': '2.4.0',
-                    'max_version': '2.4.43',
-                    'cve_id': 'CVE-2020-9490',
-                    'severity': 'High',
-                    'description': 'Improper handling of HTTP requests in Apache HTTP Server'
-                }
-            ],
-            'nginx': [
-                {
-                    'product': 'Nginx',
-                    'min_version': '1.16.0',
-                    'max_version': '1.19.6',
-                    'cve_id': 'CVE-2021-3618',
-                    'severity': 'High',
-                    'description': 'Vulnerability in HTTP2 handling in Nginx'
-                }
-            ],
-            'openssh': [
-                {
-                    'product': 'OpenSSH',
-                    'min_version': '1.0',
-                    'max_version': '8.2',
-                    'cve_id': 'CVE-2020-14145',
-                    'severity': 'Medium',
-                    'description': 'Information disclosure in OpenSSH'
-                },
-                {
-                    'product': 'OpenSSH',
-                    'min_version': '7.4',
-                    'max_version': '8.5',
-                    'cve_id': 'CVE-2021-28041',
-                    'severity': 'High',
-                    'description': 'Authentication bypass in OpenSSH'
-                }
-            ],
-            'openssl': [
-                {
-                    'product': 'OpenSSL',
-                    'min_version': '1.0.1',
-                    'max_version': '1.0.1i',
-                    'cve_id': 'CVE-2014-0160',
-                    'severity': 'Critical',
-                    'description': 'Heartbleed - Buffer over-read in OpenSSL'
-                }
-            ],
-            'mysql': [
-                {
-                    'product': 'MySQL',
-                    'min_version': '5.6',
-                    'max_version': '5.6.30',
-                    'cve_id': 'CVE-2015-3156',
-                    'severity': 'High',
-                    'description': 'Vulnerability in MySQL'
-                }
-            ],
-            'postgresql': [
-                {
-                    'product': 'PostgreSQL',
-                    'min_version': '9.0',
-                    'max_version': '12.5',
-                    'cve_id': 'CVE-2021-22911',
-                    'severity': 'Medium',
-                    'description': 'Vulnerability in PostgreSQL'
-                }
-            ]
-        }
-        
-        results = []
-        product_lower = product.lower() if product else ""
-        
-        for service_name, cves in known_cves.items():
-            if service_name in product_lower:
-                for cve_info in cves:
-                    # Если указана версия, проверяем попадает ли она в диапазон
-                    if version:
-                        if CVESearcher._is_version_vulnerable(version, cve_info.get('min_version'), cve_info.get('max_version')):
-                            results.append(cve_info)
-                    else:
-                        # Если версия не указана, включаем все CVE для этого сервиса
-                        results.append(cve_info)
-        
-        return results
-    
-    @staticmethod
-    def _is_version_vulnerable(current: str, min_ver: str, max_ver: str) -> bool:
-        """Проверка, уязвима ли текущая версия"""
-        try:
-            curr_parts = [int(x) for x in current.split('.')[:3]]
-            min_parts = [int(x) for x in min_ver.split('.')[:3]]
-            max_parts = [int(x) for x in max_ver.split('.')[:3]]
-            
-            # Паддируем до 3 компонентов
-            while len(curr_parts) < 3:
-                curr_parts.append(0)
-            while len(min_parts) < 3:
-                min_parts.append(0)
-            while len(max_parts) < 3:
-                max_parts.append(0)
-            
-            return min_parts <= curr_parts <= max_parts
-        except (ValueError, AttributeError):
-            return False
-    
-    @staticmethod
-    def _search_via_api(product: str, version: str = None) -> List[Dict[str, Any]]:
-        """Поиск CVE через API (используется nvdlib если доступен)"""
-        # Сначала пробуем nvdlib если доступен
-        if NVDLIB_AVAILABLE:
-            try:
-                results = CVESearcher._search_via_nvdlib(product, version)
-                if results:
-                    return results
-            except Exception as e:
-                print(f"{Fore.YELLOW}[!] Ошибка поиска CVE через nvdlib: {e}")
-        
-        # Fallback на CveDetails API
-        try:
-            if version:
-                url = f"https://www.cvedetails.com/json-feed.php?product={quote(product)}&version={quote(version)}"
+            if not self.nvd_api_key:
+                if self.request_count >= 5:
+                    time_since_last = current_time - self.last_request_time
+                    if time_since_last < 30:
+                        time.sleep(30 - time_since_last)
+                    self.request_count = 0
             else:
-                url = f"https://www.cvedetails.com/json-feed.php?product={quote(product)}"
+                if self.request_count >= 50:
+                    time_since_last = current_time - self.last_request_time
+                    if time_since_last < 30:
+                        time.sleep(30 - time_since_last)
+                    self.request_count = 0
             
-            # Устанавливаем timeout чтобы не зависать
-            response = requests.get(url, timeout=5)
+            self.last_request_time = time.time()
+    
+    def search_cve(self, product: str, version: str = None) -> List[CVEInfo]:
+        """Поиск CVE для продукта"""
+        results = []
+        
+        nvd_results = self._search_nvd_api(product, version)
+        results.extend(nvd_results)
+        
+        if len(results) < MAX_CVE_PER_SERVICE:
+            circl_results = self._search_circl_api(product, version)
+            results.extend(circl_results)
+        
+        local_results = self._search_known_vulnerabilities(product, version)
+        results.extend(local_results)
+        
+        unique_results = {}
+        for cve in results:
+            if cve.cve_id not in unique_results:
+                unique_results[cve.cve_id] = cve
+        
+        sorted_results = sorted(unique_results.values(), key=lambda x: x.cvss_score, reverse=True)
+        return sorted_results[:MAX_CVE_PER_SERVICE]
+    
+    def _search_nvd_api(self, product: str, version: str = None) -> List[CVEInfo]:
+        """Поиск через официальное NVD API"""
+        try:
+            base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+            
+            if version:
+                keyword = f'"{product}" "{version}"'
+            else:
+                keyword = f'"{product}"'
+            
+            params = {
+                'keywordSearch': keyword,
+                'resultsPerPage': MAX_CVE_PER_SERVICE,
+                'pubStartDate': (datetime.now() - timedelta(days=365)).isoformat()
+            }
+            
+            if self.nvd_api_key:
+                params['apiKey'] = self.nvd_api_key
+            
+            self._rate_limit()
+            response = requests.get(base_url, params=params, timeout=REQUEST_TIMEOUT)
+            
             if response.status_code == 200:
                 data = response.json()
-                return data.get('cveCollection', [])[:5]  # Ограничиваем до 5 результатов
+                cves = []
+                
+                for vuln in data.get('vulnerabilities', []):
+                    cve = vuln.get('cve', {})
+                    metrics = cve.get('metrics', {})
+                    cvss_v3 = metrics.get('cvssMetricV31', [{}])[0].get('cvssData', {})
+                    if not cvss_v3:
+                        cvss_v3 = metrics.get('cvssMetricV30', [{}])[0].get('cvssData', {})
+                    
+                    severity = cvss_v3.get('baseSeverity', 'UNKNOWN')
+                    cvss_score = cvss_v3.get('baseScore', 0.0)
+                    
+                    cves.append(CVEInfo(
+                        cve_id=cve.get('id', 'Unknown'),
+                        severity=severity.capitalize() if severity != 'UNKNOWN' else 'Unknown',
+                        cvss_score=cvss_score,
+                        description=cve.get('descriptions', [{}])[0].get('value', 'No description'),
+                        published_date=cve.get('published', ''),
+                        references=[ref.get('url', '') for ref in cve.get('references', [])[:3]]
+                    ))
+                
+                return cves
         except Exception as e:
             pass
         
         return []
     
-    @staticmethod
-    def _search_via_nvdlib(product: str, version: str = None) -> List[Dict[str, Any]]:
-        """Поиск CVE через nvdlib API"""
-        if not NVDLIB_AVAILABLE:
-            return []
-        
+    def _search_circl_api(self, product: str, version: str = None) -> List[CVEInfo]:
+        """Поиск через CIRCL CVE Search API"""
         try:
-            results = []
-            # Ищем CVE по продукту
-            cves = nvdlib.searchCPE(query=product, limit=10)
+            base_url = "https://cve.circl.lu/api/search"
+            query = f"{product} {version}" if version else product
             
-            for cpe_match in cves:
-                if hasattr(cpe_match, 'cpeMatch'):
-                    for cpe in cpe_match.cpeMatch:
-                        if version:
-                            # Проверяем версию
-                            if hasattr(cpe, 'versionStartIncluding') and hasattr(cpe, 'versionEndIncluding'):
-                                start = cpe.versionStartIncluding
-                                end = cpe.versionEndIncluding
-                                if CVESearcher._is_version_vulnerable(version, start or '0.0', end or '999.999'):
-                                    results.append({
-                                        'product': product,
-                                        'cve_id': getattr(cpe, 'cveId', 'Unknown'),
-                                        'severity': 'High',
-                                        'description': f'Found via nvdlib for {product}'
-                                    })
-                        else:
-                            results.append({
-                                'product': product,
-                                'cve_id': getattr(cpe, 'cveId', 'Unknown'),
-                                'severity': 'High',
-                                'description': f'Found via nvdlib for {product}'
-                            })
+            self._rate_limit()
+            response = requests.get(f"{base_url}/{quote(query)}", timeout=REQUEST_TIMEOUT)
             
-            return results[:5]  # Ограничиваем до 5 результатов
+            if response.status_code == 200:
+                data = response.json()
+                cves = []
+                
+                for cve in data[:MAX_CVE_PER_SERVICE]:
+                    cvss_score = cve.get('cvss', 0)
+                    severity = "Critical" if cvss_score >= 9.0 else "High" if cvss_score >= 7.0 else "Medium" if cvss_score >= 4.0 else "Low"
+                    
+                    cves.append(CVEInfo(
+                        cve_id=cve.get('id', 'Unknown'),
+                        severity=severity,
+                        cvss_score=cvss_score,
+                        description=cve.get('summary', 'No description'),
+                        published_date=cve.get('Published', ''),
+                        references=cve.get('references', [])
+                    ))
+                
+                return cves
         except Exception as e:
-            return []
-
+            pass
+        
+        return []
+    
+    def _search_known_vulnerabilities(self, product: str, version: str = None) -> List[CVEInfo]:
+        """Локальная база известных уязвимостей"""
+        known_vulns = {
+            'openssl': [
+                CVEInfo(
+                    cve_id='CVE-2014-0160',
+                    severity='Critical',
+                    cvss_score=10.0,
+                    description='Heartbleed - Buffer over-read in OpenSSL',
+                    published_date='2014-04-07',
+                    exploit_maturity='High',
+                    remediation='Обновите OpenSSL до версии 1.0.1g или выше'
+                )
+            ],
+            'apache': [
+                CVEInfo(
+                    cve_id='CVE-2021-41773',
+                    severity='Critical',
+                    cvss_score=9.8,
+                    description='Path traversal and RCE in Apache HTTP Server 2.4.49',
+                    published_date='2021-10-05',
+                    exploit_maturity='High',
+                    remediation='Обновите Apache до версии 2.4.50'
+                )
+            ],
+            'nginx': [
+                CVEInfo(
+                    cve_id='CVE-2021-23017',
+                    severity='High',
+                    cvss_score=8.6,
+                    description='DNS resolver off-by-one error',
+                    published_date='2021-08-18',
+                    exploit_maturity='Medium',
+                    remediation='Обновите nginx до версии 1.21.1'
+                )
+            ]
+        }
+        
+        product_lower = product.lower()
+        results = []
+        
+        for vuln_product, cves in known_vulns.items():
+            if vuln_product in product_lower:
+                results.extend(cves)
+        
+        return results
 
 class NmapScanner(ReportBase):
-    """Сканер портов и сервисов с использованием Nmap"""
+    """Расширенный сканер с поддержкой NSE скриптов и CVE API"""
     
-    def __init__(self, target, output_base=None, reports_dir=None):
-        """
-        Инициализация Nmap сканера
-        
-        Args:
-            target: Целевой хост (домен, IP или IP/CIDR)
-            output_base: Базовое имя для файлов отчетов
-            reports_dir: Директория для отчетов
-        """
+    def __init__(self, target: str, output_base: str = None, reports_dir: str = None, nvd_api_key: str = None):
+        """Инициализация сканера"""
         super().__init__('nmap', target, Path(reports_dir) if reports_dir else None)
         
         self.target = target
         self.nm = nmap.PortScanner()
-        self.nm_results = {}
         self.discovered_hosts = []
         self.open_ports = []
         self.vulnerabilities = []
+        self.nse_results = []
         self.scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.start_time = datetime.now()
-        self.end_time = None
         
-        # Базовое имя для файлов
+        self.cve_searcher = CVESearcher(nvd_api_key)
+        self.reports_dir = self.tool_dir.parent
+        
         if output_base:
             self.filename_base = output_base
         else:
             safe_target = target.replace('/', '_').replace('\\', '_').replace(':', '_')
             self.filename_base = f"nmap_{safe_target}_{self.scan_id}"
-    
-    def run_scan(self, arguments: str = "-sV -sC --top-ports 1000") -> bool:
-        """
-        Запустить Nmap сканирование
         
-        Args:
-            arguments: Аргументы для Nmap (по умолчанию определение версий и top 1000 портов)
-            
-        Returns:
-            True если сканирование успешно, False в противном случае
-        """
+        self.scan_profile = "vuln"
+        
+        self.word_dir = self.reports_dir / "word"
+        self.word_dir.mkdir(parents=True, exist_ok=True)
+        
+        print(f"{Fore.GREEN}[*] Папки для отчетов:")
+        print(f"{Fore.GREEN}[*]   JSON: {self.json_dir}")
+        print(f"{Fore.GREEN}[*]   TXT: {self.txt_dir}")
+        print(f"{Fore.GREEN}[*]   WORD: {self.word_dir}")
+    
+    def run_scan(self, arguments: str = None, scan_profile: str = "vuln") -> bool:
+        """Запуск Nmap сканирования"""
+        self.scan_profile = scan_profile
+        
+        profiles = {
+            "quick": "-sV --top-ports 100 -T4 --min-rate 1000",
+            "full": "-sV -sC -p- -O -T4",
+            "vuln": "-sV -sC --script=vuln --script-args=unsafe=1 -p- -T4",
+            "stealth": "-sS -Pn -T2 -f --max-retries 1 --min-rate 100",
+            "web": "-sV -sC -p80,443,8080,8443 --script=http-*",
+            "discovery": "-sV -sC -A -T4"
+        }
+        
+        final_arguments = arguments if arguments else profiles.get(scan_profile, profiles["vuln"])
+        
         try:
-            print(f"{Fore.CYAN}[*] Запускаем Nmap сканирование целевого хоста: {self.target}")
-            print(f"{Fore.CYAN}[*] Аргументы: {arguments}")
+            print(f"{Fore.CYAN}[*] Запуск Nmap: {self.target}")
+            print(f"{Fore.CYAN}[*] Профиль: {scan_profile}")
             
-            self.nm.scan(self.target, arguments=arguments, sudo=False)
-            self.nm_results = self.nm
-            
-            print(f"{Fore.GREEN}[+] Сканирование завершено успешно")
+            self.nm.scan(self.target, arguments=final_arguments, sudo=False)
+            print(f"{Fore.GREEN}[+] Сканирование завершено")
             return True
             
-        except nmap.PortScannerError as e:
-            print(f"{Fore.RED}[!] Ошибка Nmap: {e}")
-            return False
         except Exception as e:
-            print(f"{Fore.RED}[!] Ошибка сканирования: {e}")
+            print(f"{Fore.RED}[!] Ошибка: {e}")
             return False
     
-    def parse_results(self):
-        """Парс результатов Nmap сканирования с параллельным поиском CVE"""
+    def parse_results(self, search_cves: bool = True):
+        """Парсинг результатов Nmap"""
         try:
-            # Собираем все порты для параллельной обработки
-            ports_for_processing = []
+            ports_for_cve = []
             
             for host in self.nm.all_hosts():
-                print(f"{Fore.CYAN}[*] Парсим результаты для хоста: {host}")
-                
                 host_info = {
                     'host': host,
                     'status': self.nm[host].state(),
+                    'hostname': self.nm[host].hostname() or '',
                     'ports': []
                 }
                 
-                # Проходим по всем портам
                 for proto in self.nm[host].all_protocols():
-                    ports = self.nm[host][proto].keys()
-                    
-                    for port in ports:
+                    for port in self.nm[host][proto].keys():
+                        port_data = self.nm[host][proto][port]
+                        
                         port_info = {
                             'host': host,
                             'port': port,
                             'protocol': proto,
-                            'state': self.nm[host][proto][port]['state'],
-                            'service': self.nm[host][proto][port].get('name', 'unknown'),
-                            'version': self.nm[host][proto][port].get('version', 'unknown'),
-                            'extrainfo': self.nm[host][proto][port].get('extrainfo', ''),
-                            'vulnerabilities': []
+                            'state': port_data.get('state', 'unknown'),
+                            'service': port_data.get('name', 'unknown'),
+                            'product': port_data.get('product', ''),
+                            'version': port_data.get('version', '')
                         }
                         
                         host_info['ports'].append(port_info)
                         
-                        # Если открытый порт - добавляем для поиска CVE
                         if port_info['state'] == 'open':
                             self.open_ports.append(port_info)
-                            ports_for_processing.append(port_info)
+                            if search_cves and port_info['service'] != 'unknown':
+                                ports_for_cve.append(port_info)
                 
                 self.discovered_hosts.append(host_info)
-                print(f"{Fore.GREEN}[+] Обнаружено открытых портов на {host}: {len([p for p in host_info['ports'] if p['state'] == 'open'])}")
             
-            # Параллельный поиск CVE для всех открытых портов
-            if ports_for_processing:
-                self._search_cves_parallel(ports_for_processing)
-        
+            if ports_for_cve:
+                self._search_cves_parallel(ports_for_cve)
+            
         except Exception as e:
-            print(f"{Fore.RED}[!] Ошибка при парсе результатов: {e}")
+            print(f"{Fore.RED}[!] Ошибка парсинга: {e}")
     
-    def _search_cves_parallel(self, ports: List[Dict[str, Any]], max_workers: int = 5):
-        """
-        Параллельный поиск CVE для множества портов
+    def _search_cves_parallel(self, ports: List[Dict]):
+        """Параллельный поиск CVE"""
+        print(f"{Fore.CYAN}[*] Поиск CVE для {len(ports)} сервисов...")
         
-        Args:
-            ports: Список портов для обработки
-            max_workers: Максимальное количество параллельных потоков
-        """
-        print(f"{Fore.CYAN}[*] Запускаем параллельный поиск CVE для {len(ports)} портов...")
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {}
-            
-            for port_info in ports:
-                future = executor.submit(self.search_service_cves, port_info)
-                futures[future] = port_info
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(self._search_service_cves, p): p for p in ports}
             
             for future in as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
-                    port_info = futures[future]
-                    print(f"{Fore.YELLOW}[!] Ошибка при обработке {port_info['host']}:{port_info['port']}: {e}")
+                    pass
     
-    def search_service_cves(self, port_info: Dict[str, Any]):
-        """
-        Поиск CVE для обнаруженного сервиса
-        Потокобезопасный метод для параллельной обработки
-        """
-        service = port_info['service']
-        version = port_info['version']
-        host = port_info.get('host', 'unknown')
-        port = port_info['port']
+    def _search_service_cves(self, port_info: Dict) -> List[CVEInfo]:
+        """Поиск CVE для сервиса"""
+        service = port_info.get('product') or port_info.get('service', '')
+        version = port_info.get('version', '')
         
-        if service and service != 'unknown':
-            try:
-                cves = CVESearcher.search_cve(service, version if version != 'unknown' else None)
-                
-                if cves:
-                    port_info['vulnerabilities'] = cves
-                    
-                    # Добавляем в список уязвимостей потокобезопасно
-                    for cve in cves:
-                        vuln_record = {
-                            'host': host,
-                            'port': port,
-                            'service': service,
-                            'version': version,
-                            'cve_id': cve.get('cve_id', 'Unknown'),
-                            'description': cve.get('description', 'No description'),
-                            'severity': cve.get('severity', 'Unknown'),
-                            'product': cve.get('product', service)
-                        }
-                        
-                        threading.Lock()
-                        self.vulnerabilities.append(vuln_record)
-            except Exception as e:
-                print(f"{Fore.YELLOW}[!] Ошибка при поиске CVE для {service} на {host}:{port}: {e}")
+        if not service or service == 'unknown':
+            return []
+        
+        cves = self.cve_searcher.search_cve(service, version if version else None)
+        
+        for cve in cves:
+            self.vulnerabilities.append({
+                'cve_id': cve.cve_id,
+                'severity': cve.severity,
+                'cvss_score': cve.cvss_score,
+                'description': cve.description,
+                'service': service,
+                'version': version,
+                'port': port_info['port'],
+                'host': port_info['host']
+            })
+        
+        return cves
     
-    def print_results(self):
-        """Вывести результаты в консоль"""
-        print(f"\n{Fore.CYAN}{'='*80}")
-        print(f"{Fore.CYAN}{'NMAP SCAN RESULTS'.center(80)}")
-        print(f"{Fore.CYAN}{'='*80}\n")
+    def get_summary(self) -> Dict:
+        """Получить сводку"""
+        severity_counts = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0, 'Unknown': 0}
         
-        print(f"{Fore.YELLOW}[*] Целевой хост: {self.target}")
-        print(f"{Fore.YELLOW}[*] Время сканирования: {self.scan_id}\n")
+        for vuln in self.vulnerabilities:
+            severity = vuln.get('severity', 'Unknown')
+            if severity in severity_counts:
+                severity_counts[severity] += 1
         
-        if not self.discovered_hosts:
-            print(f"{Fore.RED}[!] Нет обнаруженных хостов")
-            return
-        
-        for host_info in self.discovered_hosts:
-            print(f"{Fore.CYAN}[*] Хост: {host_info['host']} ({host_info['status']})\n")
-            
-            open_ports = [p for p in host_info['ports'] if p['state'] == 'open']
-            if open_ports:
-                print(f"{Fore.GREEN}[+] Открытые порты ({len(open_ports)}):\n")
-                
-                for port in open_ports:
-                    print(f"  {Fore.CYAN}PORT: {port['port']}/{port['protocol']}")
-                    print(f"  {Fore.YELLOW}STATE: {port['state']}")
-                    print(f"  {Fore.CYAN}SERVICE: {port['service']}")
-                    print(f"  {Fore.YELLOW}VERSION: {port['version']}")
-                    
-                    if port.get('vulnerabilities'):
-                        print(f"  {Fore.RED}VULNERABILITIES ({len(port['vulnerabilities'])}):")
-                        for vuln in port['vulnerabilities']:
-                            print(f"    - {vuln.get('cve_id')}: {vuln.get('severity')} - {vuln.get('description')}")
-                    
-                    print()
-        
-        if self.vulnerabilities:
-            print(f"\n{Fore.RED}{'='*80}")
-            print(f"{Fore.RED}FOUND VULNERABILITIES: {len(self.vulnerabilities)}")
-            print(f"{Fore.RED}{'='*80}\n")
-            
-            for vuln in self.vulnerabilities:
-                print(f"{Fore.RED}[!] {vuln['cve_id']} - {vuln['severity']}")
-                print(f"    Host: {vuln['host']}")
-                print(f"    Port: {vuln['port']}/{vuln['service']}")
-                print(f"    Description: {vuln['description']}\n")
+        return {
+            'target': self.target,
+            'scan_duration': (datetime.now() - self.start_time).total_seconds(),
+            'total_hosts': len(self.discovered_hosts),
+            'total_ports': len(self.open_ports),
+            'total_vulnerabilities': len(self.vulnerabilities),
+            'severity_breakdown': severity_counts,
+            'scan_profile': self.scan_profile
+        }
     
-    def get_json_report(self) -> Dict[str, Any]:
-        """Получить полный отчет в формате JSON"""
-        report = {
-            'status': 'completed',
+    def get_json_report(self) -> Dict:
+        """Получить JSON отчет"""
+        summary = self.get_summary()
+        
+        return {
             'scan_info': {
                 'target': self.target,
                 'scan_id': self.scan_id,
                 'scan_datetime': self.start_time.isoformat(),
-                'tool': 'nmap',
-                'nmap_version': self.nm.nmap_version() if hasattr(self.nm, 'nmap_version') else 'unknown'
+                'scan_duration': summary['scan_duration'],
+                'profile': self.scan_profile
             },
-            'summary': {
-                'total_hosts_discovered': len(self.discovered_hosts),
-                'total_open_ports': len(self.open_ports),
-                'total_vulnerabilities': len(self.vulnerabilities),
-                'vulnerabilities_by_severity': self._count_by_severity(),
-                'status': 'completed'
-            },
-            'hosts': self.discovered_hosts,
-            'vulnerabilities': self.vulnerabilities,
-            'recommendations': self._get_recommendations()
-        }
-        return report
-    
-    def get_structured_data(self) -> Dict[str, Any]:
-        """
-        Получить структурированные данные для интеграции в общий отчет
-        Формат совместим с report_utils.py
-        """
-        return {
-            'status': 'completed',
-            'scan_info': {
-                'target': self.target,
-                'scan_datetime': self.start_time.isoformat(),
-                'tool': 'nmap'
-            },
-            'summary': {
-                'total_hosts': len(self.discovered_hosts),
-                'total_open_ports': len(self.open_ports),
-                'total_vulnerabilities': len(self.vulnerabilities),
-                'by_severity': self._count_by_severity()
-            },
-            'hosts': [
-                {
-                    'address': h['host'],
-                    'status': h['status'],
-                    'ports_count': len([p for p in h['ports'] if p['state'] == 'open'])
-                }
-                for h in self.discovered_hosts
-            ],
-            'ports': self.open_ports,
-            'vulnerabilities': [
-                {
-                    'cve_id': v['cve_id'],
-                    'severity': v['severity'],
-                    'service': v['service'],
-                    'host': v['host'],
-                    'port': v['port'],
-                    'description': v['description']
-                }
-                for v in self.vulnerabilities
-            ]
+            'summary': summary,
+            'discovered_hosts': self.discovered_hosts,
+            'open_ports': self.open_ports,
+            'vulnerabilities': self.vulnerabilities
         }
     
-    def _count_by_severity(self) -> Dict[str, int]:
-        """Подсчет уязвимостей по серьезности"""
-        severities = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0, 'Unknown': 0}
-        
-        for vuln in self.vulnerabilities:
-            severity = vuln.get('severity', 'Unknown')
-            if severity in severities:
-                severities[severity] += 1
-            else:
-                severities['Unknown'] += 1
-        
-        return severities
-    
-    def _get_recommendations(self) -> List[str]:
-        """Получить рекомендации на основе результатов"""
-        recommendations = [
-            'Закройте ненужные открытые порты с помощью firewall правил',
-            'Обновите все обнаруженные сервисы до последних безопасных версий',
-            'Используйте минимально необходимые сервисы (принцип least privilege)',
-            'Настройте Network segmentation и ограничьте доступ',
-            'Регулярно проводите сканирования портов для мониторинга изменений',
-            'Используйте IDS/IPS для обнаружения сканирований и атак',
-            'Применяйте security patches как можно скорее',
-            'Отключите ненужные сервисы и компоненты'
+    def _generate_txt_report(self) -> str:
+        """Генерировать TXT отчет"""
+        summary = self.get_summary()
+        lines = [
+            "=" * 100,
+            "ОТЧЕТ СКАНИРОВАНИЯ NMAP".center(100),
+            "=" * 100,
+            "",
+            f"Хост: {self.target}",
+            f"ID: {self.scan_id}",
+            f"Дата: {self.start_time.strftime('%d.%m.%Y %H:%M:%S')}",
+            f"Профиль: {self.scan_profile}",
+            f"Длительность: {summary['scan_duration']:.2f} сек",
+            "",
+            "СТАТИСТИКА",
+            f"  Хостов: {summary['total_hosts']}",
+            f"  Портов: {summary['total_ports']}",
+            f"  Уязвимостей: {summary['total_vulnerabilities']}",
+            "",
+            "СЕРЬЕЗНОСТЬ",
+            f"  Критические: {summary['severity_breakdown']['Critical']}",
+            f"  Высокие: {summary['severity_breakdown']['High']}",
+            f"  Средние: {summary['severity_breakdown']['Medium']}",
+            f"  Низкие: {summary['severity_breakdown']['Low']}",
+            ""
         ]
         
         if self.vulnerabilities:
-            recommendations.extend([
-                'Некоторые сервисы имеют известные уязвимости - приоритизируйте их обновление',
-                'Рассмотрите возможность миграции на альтернативные решения если обновления недоступны'
-            ])
+            lines.append("УЯЗВИМОСТИ")
+            for i, vuln in enumerate(self.vulnerabilities, 1):
+                lines.append(f"\n[{i}] {vuln.get('cve_id', 'N/A')}")
+                lines.append(f"  Severity: {vuln.get('severity', 'Unknown')}")
+                lines.append(f"  Service: {vuln.get('service', 'N/A')} {vuln.get('version', '')}")
+                lines.append(f"  Port: {vuln.get('port', 'N/A')}")
         
-        return recommendations
-    
-    def generate_txt_report(self) -> str:
-        """Генерировать текстовый отчет"""
-        lines = []
-        
-        lines.append("╔" + "═"*78 + "╗")
-        lines.append("║" + "NMAP PORT & SERVICE SCAN REPORT".center(78) + "║")
-        lines.append("╚" + "═"*78 + "╝")
-        lines.append("")
-        
-        # Информация о сканировании
-        lines.append("📋 ИНФОРМАЦИЯ О СКАНИРОВАНИИ")
-        lines.append("─" * 80)
-        lines.append(f"  Целевой хост:          {self.target}")
-        lines.append(f"  Дата сканирования:     {self.start_time.strftime('%d.%m.%Y %H:%M:%S')}")
-        lines.append(f"  Найдено хостов:        {len(self.discovered_hosts)}")
-        lines.append(f"  Открытых портов:       {len(self.open_ports)}")
-        lines.append(f"  Найдено уязвимостей:   {len(self.vulnerabilities)}")
-        lines.append("")
-        
-        # Обнаруженные хосты и порты
-        if self.discovered_hosts:
-            lines.append("🖥️ ОБНАРУЖЕННЫЕ ХОСТЫ И ПОРТЫ")
-            lines.append("─" * 80)
-            
-            for host_info in self.discovered_hosts:
-                lines.append(f"\n  Хост: {host_info['host']} ({host_info['status']})")
-                lines.append("  " + "─" * 76)
-                
-                open_ports = [p for p in host_info['ports'] if p['state'] == 'open']
-                
-                if open_ports:
-                    lines.append("  Открытые порты:")
-                    for port in open_ports:
-                        lines.append(f"    • {port['port']}/{port['protocol']:3s} | {port['service']:15s} | {port['version']}")
-                        if port.get('vulnerabilities'):
-                            for cve in port['vulnerabilities']:
-                                lines.append(f"      ⚠️  {cve.get('cve_id')}: {cve.get('severity')}")
-                else:
-                    lines.append("  Нет открытых портов")
-            
-            lines.append("")
-        
-        # Обнаруженные уязвимости
-        if self.vulnerabilities:
-            lines.append("\n⚠️  ОБНАРУЖЕННЫЕ УЯЗВИМОСТИ")
-            lines.append("─" * 80)
-            
-            severities = self._count_by_severity()
-            lines.append(f"  Всего: {len(self.vulnerabilities)}")
-            for severity, count in severities.items():
-                if count > 0:
-                    lines.append(f"    • {severity}: {count}")
-            
-            lines.append("\n  Детали уязвимостей:")
-            for vuln in self.vulnerabilities:
-                lines.append(f"\n    CVE ID:    {vuln['cve_id']}")
-                lines.append(f"    Хост:      {vuln['host']}")
-                lines.append(f"    Порт:      {vuln['port']}/{vuln['service']}")
-                lines.append(f"    Версия:    {vuln['version']}")
-                lines.append(f"    Серьезность: {vuln['severity']}")
-                lines.append(f"    Описание:  {vuln['description']}")
-            
-            lines.append("")
-        
-        # Рекомендации
-        lines.append("\n💡 РЕКОМЕНДАЦИИ")
-        lines.append("─" * 80)
-        for i, rec in enumerate(self._get_recommendations(), 1):
-            lines.append(f"  {i}. {rec}")
-        
-        lines.append("")
-        lines.append("═" * 80)
-        lines.append(f"Дата создания отчета: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
-        lines.append("═" * 80)
-        
+        lines.extend(["", "=" * 100])
         return "\n".join(lines)
     
-    def save_reports(self) -> Dict[str, str]:
-        """Сохранить JSON и TXT отчеты"""
-        reports = {}
+    def _generate_word_report(self) -> Optional[str]:
+        """Генерировать Word отчет"""
+        if not HAS_DOCX:
+            return None
         
         try:
-            # Сохраняем JSON отчет
-            json_data = self.get_json_report()
-            json_path = self.json_dir / f"{self.filename_base}.json"
+            summary = self.get_summary()
+            doc = Document()
             
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
+            doc.add_heading('ОТЧЕТ СКАНИРОВАНИЯ NMAP', 0)
             
-            reports['json'] = str(json_path)
-            print(f"{Fore.GREEN}[+] JSON отчет сохранен: {json_path}")
+            doc.add_heading('ИНФОРМАЦИЯ', level=1)
+            table = doc.add_table(rows=5, cols=2)
+            table.style = 'Light Grid Accent 1'
+            data = [
+                ('Хост:', self.target),
+                ('ID:', self.scan_id),
+                ('Дата:', self.start_time.strftime('%d.%m.%Y %H:%M:%S')),
+                ('Профиль:', self.scan_profile),
+                ('Длительность:', f"{summary['scan_duration']:.2f} сек"),
+            ]
+            for i, (k, v) in enumerate(data):
+                table.rows[i].cells[0].text = k
+                table.rows[i].cells[1].text = str(v)
             
-            # Сохраняем TXT отчет
-            txt_content = self.generate_txt_report()
-            txt_path = self.txt_dir / f"{self.filename_base}.txt"
+            doc.add_heading('УЯЗВИМОСТИ', level=1)
+            if self.vulnerabilities:
+                table = doc.add_table(rows=1, cols=5)
+                table.style = 'Light Grid Accent 1'
+                hdr = table.rows[0].cells
+                hdr[0].text = 'CVE'
+                hdr[1].text = 'Severity'
+                hdr[2].text = 'Service'
+                hdr[3].text = 'Port'
+                hdr[4].text = 'Version'
+                
+                for vuln in self.vulnerabilities[:50]:
+                    row = table.add_row().cells
+                    row[0].text = vuln.get('cve_id', 'N/A')
+                    row[1].text = vuln.get('severity', 'Unknown')
+                    row[2].text = vuln.get('service', 'N/A')
+                    row[3].text = str(vuln.get('port', 'N/A'))
+                    row[4].text = vuln.get('version', '')
             
-            with open(txt_path, 'w', encoding='utf-8') as f:
-                f.write(txt_content)
-            
-            reports['txt'] = str(txt_path)
-            print(f"{Fore.GREEN}[+] TXT отчет сохранен: {txt_path}")
-            
+            word_path = self.word_dir / f"{self.filename_base}.docx"
+            doc.save(str(word_path))
+            print(f"{Fore.GREEN}[+] Word отчет: {word_path}")
+            return str(word_path)
         except Exception as e:
-            print(f"{Fore.RED}[!] Ошибка сохранения отчетов: {e}")
+            print(f"{Fore.YELLOW}[!] Word ошибка: {e}")
+            return None
+    
+    def print_report(self):
+        """Вывести и сохранить отчеты"""
+        txt_report = self._generate_txt_report()
+        print("\n" + txt_report + "\n")
+        
+        self.save_json_report()
+        self.save_txt_report()
+        self._generate_word_report()
+    
+    def save_reports(self) -> Dict[str, str]:
+        """Сохранить JSON и TXT отчеты (для совместимости с server.py)"""
+        reports = {}
+        
+        # Сохраняем JSON
+        json_path = self.save_json_report()
+        if json_path:
+            reports['json'] = json_path
+        
+        # Сохраняем TXT
+        txt_path = self.save_txt_report()
+        if txt_path:
+            reports['txt'] = txt_path
+        
+        # Сохраняем WORD если доступен
+        if HAS_DOCX:
+            word_path = self._generate_word_report()
+            if word_path:
+                reports['word'] = word_path
         
         return reports
 
+    def save_json_report(self) -> Optional[str]:
+        """Сохранить JSON отчет"""
+        try:
+            json_path = self.json_dir / f"{self.filename_base}.json"
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(self.get_json_report(), f, indent=2, ensure_ascii=False)
+            print(f"{Fore.GREEN}[+] JSON отчет сохранен: {json_path}")
+            return str(json_path)
+        except Exception as e:
+            print(f"{Fore.RED}[!] Ошибка сохранения JSON: {e}")
+            return None
 
-def simple_scan(target: str, reports_dir: str = None) -> Dict[str, Any]:
-    """
-    Простая функция для сканирования
-    
-    Args:
-        target: Целевой хост
-        reports_dir: Директория для отчетов
+    def save_txt_report(self) -> Optional[str]:
+        """Сохранить TXT отчет"""
+        try:
+            txt_path = self.txt_dir / f"{self.filename_base}.txt"
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(self._generate_txt_report())
+            print(f"{Fore.GREEN}[+] TXT отчет сохранен: {txt_path}")
+            return str(txt_path)
+        except Exception as e:
+            print(f"{Fore.RED}[!] Ошибка сохранения TXT: {e}")
+            return None
+
+    def _count_by_severity(self) -> Dict[str, int]:
+        """Подсчет уязвимостей по серьезности (для server.py)"""
+        severity_counts = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0, 'Unknown': 0}
         
-    Returns:
-        Словарь с результатами сканирования
-    """
-    scanner = NmapScanner(target, reports_dir=reports_dir)
-    
-    # Запускаем сканирование
-    if scanner.run_scan():
-        scanner.parse_results()
-        scanner.print_results()
-        scanner.save_reports()
+        for vuln in self.vulnerabilities:
+            severity = vuln.get('severity', 'Unknown')
+            if severity in severity_counts:
+                severity_counts[severity] += 1
+            else:
+                severity_counts['Unknown'] += 1
         
+        return severity_counts
+
+    def _get_recommendations(self) -> List[str]:
+        """Получить рекомендации (для server.py)"""
+        recommendations = [
+            'Закройте ненужные открытые порты',
+            'Обновите все обнаруженные сервисы',
+            'Используйте минимально необходимые сервисы',
+            'Настройте firewall для ограничения доступа',
+            'Регулярно проводите сканирования портов'
+        ]
+        
+        if self.vulnerabilities:
+            recommendations.append('Обновите уязвимые сервисы как можно скорее')
+        
+        return recommendations
+
+    def scan(self):
+        """Метод для совместимости с callback"""
+        return self.run_scan()
+
+    def display_results(self):
+        """Метод для совместимости с callback"""
+        self.print_report()
+
+    def save_json_report(self):
+        """Сохранить JSON"""
+        return super().save_json_report(self.get_json_report())
+    
+    def save_txt_report(self):
+        """Сохранить TXT"""
+        try:
+            return super().save_txt_report(self._generate_txt_report())
+        except Exception as e:
+            print(f"{Fore.RED}[!] TXT ошибка: {e}")
+
+
+def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> Dict:
+    """Простая функция для server.py"""
+    scanner = NmapScanner(target=target, reports_dir=reports_dir)
+    
+    if scanner.run_scan(scan_profile=profile):
+        scanner.parse_results(search_cves=True)
         return {
-            'status': 'completed',
+            'status': 'success',
             'target': target,
-            'hosts_discovered': len(scanner.discovered_hosts),
-            'open_ports': len(scanner.open_ports),
-            'vulnerabilities': len(scanner.vulnerabilities),
-            'result': scanner.get_json_report()
+            'scan_id': scanner.scan_id,
+            'summary': scanner.get_summary(),
+            'vulnerabilities': scanner.vulnerabilities,
+            'open_ports': scanner.open_ports,
+            'discovered_hosts': scanner.discovered_hosts
         }
     else:
-        return {
-            'status': 'failed',
-            'target': target,
-            'error': 'Nmap scan failed'
-        }
+        return {'status': 'error', 'target': target, 'message': 'Scan failed'}
 
 
-if __name__ == "__main__":
-    import argparse
-    
+def main():
+    """Основная функция"""
     parser = argparse.ArgumentParser(
-        description='Nmap Port Scanner with CVE Detection',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-        Examples:
-            python nmap_scanner.py example.com
-            python nmap_scanner.py 192.168.1.1 -a "-sV -sC -p 1-65535"
-            python nmap_scanner.py 192.168.1.0/24 -a "-sn"
-        """
+        description='Advanced Nmap Scanner with CVE API',
+        epilog='Examples:\n  python nmap_scanner.py 192.168.1.1\n  python nmap_scanner.py example.com -p quick'
     )
     
-    parser.add_argument('target', help='Target host/domain/IP for scanning')
-    parser.add_argument('-a', '--arguments', default="-sV -sC --top-ports 1000",
-                        help='Nmap arguments (default: "-sV -sC --top-ports 1000")')
-    parser.add_argument('-o', '--output', help='Output base filename')
-    parser.add_argument('-r', '--reports-dir', help='Reports directory')
+    parser.add_argument('target', help='Target IP or domain')
+    parser.add_argument('-p', '--profile', default='vuln', 
+                       choices=['quick', 'full', 'vuln', 'stealth', 'web', 'discovery'],
+                       help='Scan profile')
+    parser.add_argument('-a', '--arguments', help='Custom Nmap arguments')
+    parser.add_argument('-o', '--output', help='Output filename')
+    parser.add_argument('-r', '--reports-dir', default='./reports', help='Reports directory')
+    parser.add_argument('--nvd-api-key', help='NVD API key')
     
     args = parser.parse_args()
     
-    scanner = NmapScanner(args.target, args.output, args.reports_dir)
+    print(f"{Fore.CYAN}╔{'═'*70}╗")
+    print(f"║{'ADVANCED NMAP SCANNER v3.0'.center(70)}║")
+    print(f"╚{'═'*70}╝{Fore.RESET}\n")
     
-    if scanner.run_scan(args.arguments):
-        scanner.parse_results()
-        scanner.print_results()
-        scanner.save_reports()
+    scanner = NmapScanner(
+        target=args.target,
+        output_base=args.output,
+        reports_dir=args.reports_dir,
+        nvd_api_key=args.nvd_api_key
+    )
+    
+    if scanner.run_scan(arguments=args.arguments, scan_profile=args.profile):
+        scanner.parse_results(search_cves=True)
+        scanner.print_report()
+        print(f"\n{Fore.GREEN}[✓] Успешно завершено!{Fore.RESET}\n")
+        sys.exit(0)
     else:
+        print(f"{Fore.RED}[!] Ошибка сканирования{Fore.RESET}\n")
         sys.exit(1)
+
+
+
+if __name__ == "__main__":
+    main()
