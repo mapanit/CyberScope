@@ -2431,14 +2431,12 @@ async def _register_scan_callbacks():
 async def get_report_content(filename: str = Query(..., description="Имя файла отчета"), report_type: str = Query("json", description="Тип отчета: json, txt_report, или combined")):
     """
     Получить содержимое отчета для просмотра в браузере
-
     Args:
         filename: Имя файла отчета
         report_type: Тип отчета:
             - 'json': JSON отчеты из combined/json
             - 'txt_report': TXT отчеты из combined/txt
             - 'combined': Все типы из combined
-
     Returns:
         Текстовое содержимое файла
     """
@@ -2480,7 +2478,6 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 return PlainTextResponse(content, media_type="text/plain")
-
         except UnicodeDecodeError:
             raise HTTPException(
                 status_code=500, detail="Ошибка при чтении файла (кодировка)")

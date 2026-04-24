@@ -6,6 +6,8 @@
 /backend/scanners/__pycache__
 /backend/utils/__pycache__
 /backend/core/__pycache__
+/backend/auth/__pycache__
+/backend/scanners/__pycache__
 /backend/scanners/scan_results
 /backend/reports
 /backend/scan_results

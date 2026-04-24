@@ -1,11 +1,5 @@
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  useLocation,
-  Navigate,
-} from "react-router-dom";
-import { useState, useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import "./App.scss";
@@ -14,13 +8,11 @@ import Header from "./Component/Header/Header";
 import Search from "./Component/Pages/Home/Home";
 import Footer from "./Component/Footer/Footer";
 import AboutTools from "./Component/Pages/AboutTools/AboutTools";
-import Analytic from "./Component/Pages/Analytics/Analytics.jsx";
+import Questions from "./Component/Pages/Questions/Questions";
+import Task from "./Component/Pages/Task/Task";
 import Modal from "./Component/Modal/Modal";
 import Help from "./Component/Pages/Help/Help";
-import Login from "./Component/Pages/Auth/Login/Login";
-import Register from "./Component/Pages/Auth/Register/Register";
-import Dashboard from "./Component/Pages/Auth/Dashboard/Dashboard";
-import ProtectedRoute from "./Component/ProtectedRoute";
+import ProjectDashboard from "./Component/Pages/ProjectDashboard/ProjectDashboard";
 
 const pageVariants = {
   initial: {
@@ -175,16 +167,11 @@ function App() {
             }
           />
           <Route
-          
-            path="/register"
+            path="/task"
             element={
-              !token ? (
-                <AnimatedPage>
-                  <Register  setToken={setToken} />
-                </AnimatedPage>
-              ) : (
-                <Navigate to="/" replace />
-              )
+              <AnimatedPage>
+                <Task language={language} />
+              </AnimatedPage>
             }
           />
           <Route
@@ -200,7 +187,7 @@ function App() {
             }
           />
           <Route
-            path="/dashboard"
+            path="user"
             element={
               token ? (
                 <AnimatedPage>

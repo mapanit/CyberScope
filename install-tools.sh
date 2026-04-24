@@ -20,4 +20,9 @@ go install github.com/OJ/gobuster/v3@latest
 
 
 echo "Установка завершена!"
-echo "Не забудьте добавить ~/go/bin в PATH: export PATH=\$PATH:~/go/bin"
+
+# Добавляем ~/go/bin в PATH в ~/.bashrc
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+echo "Настройка завершена!"

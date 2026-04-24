@@ -45,7 +45,7 @@ class ReportBase(ABC):
 
         # Настройка директорий
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -109,7 +109,7 @@ class CombinedReport:
         self.scan_datetime = datetime.now().isoformat()
 
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -154,7 +154,7 @@ class CombinedReport:
             Dict с путями к TXT файлам для каждого инструмента
         """
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -224,7 +224,7 @@ class CombinedReport:
             Dict с путями к TXT файлам для каждого инструмента
         """
         if reports_base_dir is None:
-            reports_base_dir = Path(__file__).parent.parent / "reports"
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
         else:
             reports_base_dir = Path(reports_base_dir)
 
@@ -834,13 +834,13 @@ class CombinedReport:
             return ""
 
         # Определяем путь к TXT файлу
-        if txt_file_path is None:
+        if txt_file_path is None or not txt_file_path:
             txt_file_path = self.txt_dir / f"{self.filename_base}.txt"
         else:
             txt_file_path = Path(txt_file_path)
 
-        if not txt_file_path.exists():
-            print(f"[!] TXT файл не найден: {txt_file_path}")
+        if not txt_file_path.exists() or txt_file_path.is_dir():
+            print(f"[!] TXT файл не найден или является директорией: {txt_file_path}")
             return ""
 
         # Проверяем размер файла
@@ -933,9 +933,9 @@ class CombinedReport:
         # Сохраняем TXT
         txt_path = self.save_txt(method=method)
 
-        # Сохраняем DOCX
+        # Сохраняем DOCX только если TXT файл был успешно создан
         docx_path = ""
-        if include_docx:
+        if include_docx and txt_path:
             docx_path = self.txt_to_docx(txt_path)
 
         return {
@@ -1050,7 +1050,7 @@ def create_combined_report_by_time(scan_id: str, start_time: datetime,
     txt_path = combined.save_txt(method=method)
     docx_path = ""
     
-    if include_docx:
+    if include_docx and txt_path:
         docx_path = combined.txt_to_docx(txt_path)
 
     return {
@@ -1087,7 +1087,7 @@ def quick_merge_all_reports(reports_base_dir: Optional[Path] = None,
     txt_path = combined.save_txt(method='line_by_line')
     docx_path = ""
     
-    if include_docx:
+    if include_docx and txt_path:
         docx_path = combined.txt_to_docx(txt_path)
 
     return {
@@ -1339,6 +1339,7 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
 if __name__ == "__main__":
 
     # Пример 1️⃣: Создание объединенного отчета из недавних отчетов (последние 5 минут) с DOCX
+    
     """
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     result = create_combined_report(scan_id, recent_minutes=5, method='line_by_line', include_docx=True)
@@ -1347,8 +1348,10 @@ if __name__ == "__main__":
     print(f"   TXT:  {result['txt']}")
     print(f"   DOCX: {result['docx']}")
     """
+    
 
     # Пример 2️⃣: Создание отчета с указанием временного окна с DOCX
+
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     start_time = datetime.now() - timedelta(minutes=10)
     result2 = create_combined_report_by_time(

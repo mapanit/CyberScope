@@ -15,7 +15,6 @@ services:
       - "host.docker.internal:host-gateway"
 
     
-
   bot:
     build:
       context: ./backend

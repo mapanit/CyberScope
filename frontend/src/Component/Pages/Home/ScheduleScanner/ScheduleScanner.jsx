@@ -134,7 +134,11 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
   // Добавление задачи
   const addSchedule = async () => {
-    if (!query.trim()) {
+    // Получаем список URL'ов (если query - массив, иначе преобразуем в массив)
+    const urlList = Array.isArray(query) ? query : (query ? [query] : []);
+    const validUrls = urlList.filter(url => url.trim());
+
+    if (validUrls.length === 0) {
       alert(language === "ru" ? 'Пожалуйста, введите цель сканирования' : 'Please enter the scan target');
       return;
     }
@@ -178,7 +182,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
       date: scheduleDate,
       days: scheduleDays,
       monthDay: scheduleMonthDay,
-      query: query.trim(),
+      urls: validUrls,  // Используем массив URL'ов вместо query
       activeTools: [...activeTools],
       allowInternal: allowInternal,
       nextRun: nextRun.toISOString(),
@@ -331,16 +335,70 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
       {viewMode === 'create' ? (
         <div className="schedule-form">
-          {/* Цель сканирования */}
+          {/* Цель сканирования - несколько URL'ов */}
           <div className="form-group">
-            <label>🎯 {language === "ru" ? 'Цель' : 'Target'}</label>
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="https://example.com"
-              className="schedule-input"
-            />
+            <label>🎯 {language === "ru" ? 'Цели' : 'Targets'}</label>
+            <div className="urls-list">
+              {Array.isArray(query) ? query.map((url, idx) => (
+                <div key={idx} style={{ marginBottom: '8px', display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={url}
+                    onChange={(e) => {
+                      const newUrls = [...query];
+                      newUrls[idx] = e.target.value;
+                      setQuery(newUrls);
+                    }}
+                    placeholder="https://example.com"
+                    className="schedule-input"
+                    style={{ flex: 1 }}
+                  />
+                  {query.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setQuery(query.filter((_, i) => i !== idx))}
+                      style={{
+                        padding: '4px 8px',
+                        backgroundColor: '#dc3545',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '3px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              )) : (
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery([e.target.value])}
+                  placeholder="https://example.com"
+                  className="schedule-input"
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const newUrls = Array.isArray(query) ? [...query, ''] : [query, ''];
+                setQuery(newUrls);
+              }}
+              style={{
+                marginTop: '6px',
+                padding: '4px 12px',
+                backgroundColor: '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                fontSize: '12px'
+              }}
+            >
+              + {language === "ru" ? 'Добавить URL' : 'Add URL'}
+            </button>
           </div>
 
           {/* Тип расписания */}
@@ -488,7 +546,9 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
                 <div className="task-header">
                   <div className="task-target">
                     <span className="target-icon">🎯</span>
-                    <span className="target-text">{task.query}</span>
+                    <span className="target-text">
+                      {task.urls ? task.urls.join(', ') : task.query}
+                    </span>
                   </div>
                   <div className="task-actions">
                     <button 
