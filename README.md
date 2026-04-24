@@ -2,7 +2,8 @@
 
 Автоматизированная веб-платформа для комплексного анализа безопасности веб-ресурсов. Объединяет множество инструментов пентеста в едином интерфейсе с поддержкой отчётов JSON, TXT и DOCX.
 
-![CyberScope Demo](cb.gif)
+<video src="cb.gif" controls="controls" style="max-width: 100%;"></video>
+
 ![CyberScope Interface](image.png)
 
 ## 📖 Описание проекта
