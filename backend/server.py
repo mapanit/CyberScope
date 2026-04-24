@@ -13,6 +13,8 @@ from scanners.vulnerability_scanner import VulnerabilityScanner
 from fastapi import FastAPI, HTTPException, Query, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 from urllib.parse import urlparse
 import asyncio
 import ipaddress
@@ -28,21 +30,49 @@ import datetime
 import threading
 import logging
 
+# Auth imports
+from auth.database import SessionLocal, engine
+from auth import models, schemas, auth
+from jose import JWTError, jwt
+
 logger = logging.getLogger(__name__)
 
-# from auth.sqlalchemy.orm import Session
-# from auth.database import engine, get_db
-# from models import Base
-# from auth.schemas import UserCreate, UserLogin, UserResponse, Token
-# from auth.auth import authenticate_user, create_access_token, get_password_hash, get_current_user
-# import models
+# Initialize database
+models.Base.metadata.create_all(bind=engine)
+
+# Create tables if they don't exist
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Function to verify JWT token
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> str:
+    """Verify JWT token and return username"""
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # Глобальный словарь для отслеживания статуса сканирований
 _scan_sessions = {}
 _scan_sessions_lock = threading.Lock()
 
-
-# Base.metadata.create_all(bind=engine)
 
 
 def create_scan_session(scan_id: str) -> dict:
@@ -135,6 +165,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/auth/register", response_model=schemas.UserResponse)
+def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Регистрация нового пользователя"""
+    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    if db_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    
+    hashed_password = auth.get_password_hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        hashed_password=hashed_password,
+        # email удален - его нет в модели
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    return db_user
+
+
+@app.post("/auth/login", response_model=schemas.Token)
+def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
+    """Вход пользователя и получение JWT токена"""
+    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    
+    if not db_user or not auth.verify_password(user.password, db_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = auth.create_access_token(data={"sub": db_user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/auth/me", response_model=schemas.UserResponse)
+def get_current_user(username: str = Depends(verify_token), db: Session = Depends(get_db)):
+    """Получить информацию о текущем пользователе"""
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+    return user
+
+# ========================================================
 
 URL_RE = re.compile(r"^https?://", re.I)
 
@@ -439,7 +521,12 @@ def save_ssl_tls_report(scanner: SSLTLSScanner) -> dict:
 
 
 @app.get("/api/tool")
-async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: bool = Query(False, description="Allow scanning private/loopback addresses (use with caution)")):
+async def api_tool(
+    tool: str = Query(...),
+    q: str = Query(...),
+    allow_internal: bool = Query(False, description="Allow scanning private/loopback addresses (use with caution)"),
+    username: str = Depends(verify_token)  # Require authentication
+):
     """Run a non-streaming tool and return JSON result. Supported tools:
     - whois: runs system `whois` (if installed)
     - nuclei: runs system `nuclei` (if installed)
@@ -517,7 +604,8 @@ async def api_scanner(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "scanner", description="Выбранные инструменты (comma-separated)")
+        "scanner", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск сканера уязвимостей с сохранением отчетов"""
     try:
@@ -620,7 +708,8 @@ async def api_nuclei(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "nuclei", description="Выбранные инструменты (comma-separated)")
+        "nuclei", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск Nuclei для сканирования на уязвимости"""
     try:
@@ -1136,7 +1225,8 @@ async def api_nmap(
     arguments: str = Query("-sV -sC --top-ports 1000",
                            description="Аргументы для Nmap"),
     selected_tools: str = Query(
-        "nmap", description="Выбранные инструменты (comma-separated)")
+        "nmap", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск Nmap для сканирования портов и определения сервисов"""
     try:
@@ -1201,7 +1291,8 @@ async def run_selected_tools(
                        description="Список инструментов (comma-separated)"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
-    scan_id: str = Query(None, description="ID сканирования для отслеживания")
+    scan_id: str = Query(None, description="ID сканирования для отслеживания"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """
     Запустить выбранные инструменты сканирования и создать единый отчет

@@ -1,0 +1,247 @@
+// Colors from Home.scss
+$bg: #0f1724;
+$card: #0b1220;
+$accent: #06b6d4;
+$text: #e6eef3;
+$muted: #98a2b3;
+
+// Additional colors
+$error-color: #ff6b6b;
+$success-color: #2ecc71;
+
+// Animations
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.dashboard {
+  min-height: 100vh;
+  padding: 40px 20px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  animation: fadeIn 0.5s ease-out;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  .dashboard__container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: auto;
+    width: 1000px;
+    height: 520px;
+    .dashboard-header {
+      max-width: 1000px;
+      margin: 0 auto 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: $card;
+      padding: 30px 40px;
+      border-radius: 16px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba($accent, 0.2);
+      animation: slideDown 0.5s ease-out;
+
+      @media (max-width: 768px) {
+        flex-direction: column;
+        gap: 20px;
+        align-items: flex-start;
+        padding: 25px 20px;
+      }
+
+      h1 {
+        font-size: 32px;
+        font-weight: 700;
+        color: $text;
+        margin: 0;
+        letter-spacing: -0.5px;
+
+        @media (max-width: 768px) {
+          font-size: 24px;
+        }
+      }
+      .btn__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .logout-btn {
+        padding: 12px 28px;
+        background: $accent;
+        color: #022026;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        box-shadow: 0 4px 15px rgba($accent, 0.3);
+        margin: 0px 15px 0px 0px;
+        &:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 25px rgba($accent, 0.4);
+        }
+
+        &:active {
+          transform: translateY(0);
+        }
+
+        @media (max-width: 768px) {
+          width: 100%;
+        }
+      }
+      .nav-link {
+        padding: 12px 28px;
+        background: $accent;
+        color: #022026;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        box-shadow: 0 4px 15px rgba($accent, 0.3);
+
+        &:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 25px rgba($accent, 0.4);
+        }
+
+        &:active {
+          transform: translateY(0);
+        }
+
+        @media (max-width: 768px) {
+          width: 100%;
+        }
+      }
+    }
+
+    .user-info {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: $card;
+      border-radius: 16px;
+      padding: 40px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba($accent, 0.2);
+      animation: slideDown 0.6s ease-out;
+
+      @media (max-width: 768px) {
+        padding: 25px 20px;
+      }
+
+      h3 {
+        font-size: 24px;
+        font-weight: 700;
+        color: $text;
+        margin: 0 0 30px 0;
+        padding-bottom: 15px;
+        border-bottom: 2px solid $accent;
+        letter-spacing: -0.5px;
+      }
+
+      p {
+        font-size: 16px;
+        color: $text;
+        margin: 0 0 20px 0;
+        padding: 16px 0;
+        border-bottom: 1px solid rgba($accent, 0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+
+        &:last-child {
+          border-bottom: none;
+          margin-bottom: 0;
+        }
+
+        strong {
+          font-weight: 700;
+          color: $accent;
+          min-width: 140px;
+        }
+      }
+    }
+
+    .loading {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: $card;
+      border-radius: 16px;
+      padding: 60px 40px;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba($accent, 0.2);
+      font-size: 18px;
+      color: $muted;
+      font-weight: 500;
+      animation: fadeIn 0.5s ease-out;
+
+      &::after {
+        content: "";
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        margin-left: 10px;
+        border: 3px solid #e0e0e0;
+        border-top-color: $accent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    }
+
+    .error-message {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: rgba($error-color, 0.1);
+      border: 2px solid $error-color;
+      border-radius: 16px;
+      padding: 20px 30px;
+      color: $error-color;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      box-shadow: 0 4px 15px rgba($error-color, 0.1);
+      animation: fadeIn 0.5s ease-out;
+    }
+  }
+}

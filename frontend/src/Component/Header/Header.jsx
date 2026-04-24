@@ -1,31 +1,17 @@
 import { NavLink, useNavigate, useLocation } from "react-router-dom";
-import { useState, useEffect } from "react";
 import "./Header.scss";
 
 const Header = ({
   toggleLanguage,
   language,
+  onLogout,
+  isAuthenticated,
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
-
-  useEffect(() => {
-    const user = JSON.parse(localStorage.getItem("currentUser") || "null");
-    if (user) {
-      setIsLoggedIn(true);
-      setCurrentUser(user);
-    } else {
-      setIsLoggedIn(false);
-      setCurrentUser(null);
-    }
-  }, [location]); // Обновлять при изменении маршрута
 
   const handleLogout = () => {
-    localStorage.removeItem("currentUser");
-    setIsLoggedIn(false);
-    setCurrentUser(null);
+    onLogout();
     navigate("/login");
   };
 
@@ -38,8 +24,8 @@ const Header = ({
           <NavLink to="/about-tools" className="a" activeClassName="active">
             {language === "ru" ? "Об инструменте" : "About Tools"}
           </NavLink>
-          <NavLink to="/questions" className="a" activeClassName="active">
-            {language === "ru" ? "Вопросы" : "Questions"}
+          <NavLink to="/help" className="a" activeClassName="active">
+            {language === "ru" ? "Виды скриптов" : "Script Types"}
           </NavLink>
           <NavLink to="/Analytic" className="a" activeClassName="active">
             {language === "ru" ? "Аналитика" : "Analytic"}
@@ -53,7 +39,7 @@ const Header = ({
           <button className="btn__language" onClick={toggleLanguage}>
             {language === "ru" ? "English" : "Русский"}
           </button>
-          {isLoggedIn ? (
+          {isAuthenticated ? (
             <button className="btn__logout" onClick={handleLogout}>
               {language === "ru" ? "Выйти" : "Logout"}
             </button>

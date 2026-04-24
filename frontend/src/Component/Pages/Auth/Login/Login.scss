@@ -1,0 +1,211 @@
+
+// Colors from Home.scss
+$bg: #0f1724;
+$card: #0b1220;
+$accent: #06b6d4;
+$text: #e6eef3;
+$muted: #98a2b3;
+
+// Additional colors
+$error-color: #ff6b6b;
+$success-color: #2ecc71;
+
+// Animations
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+
+  .auth-card {
+    background: $card;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    padding: 50px;
+    border: 1px solid rgba($accent, 0.2);
+    width: 100%;
+    max-width: 420px;
+    animation: slideUp 0.5s ease-out;
+    transition: all 0.3s ease;
+
+    @media (max-width: 480px) {
+      padding: 30px 20px;
+      max-width: 100%;
+    }
+
+    h2 {
+      font-size: 32px;
+      font-weight: 700;
+      color: $text;
+      margin: 0 0 35px 0;
+      text-align: center;
+      letter-spacing: -0.5px;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+
+        label {
+          font-size: 13px;
+          font-weight: 700;
+          color: $accent;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+        }
+
+        input {
+          padding: 13px 16px;
+          border: 2px solid rgba($accent, 0.3);
+          border-radius: 10px;
+          font-size: 15px;
+          font-family: inherit;
+          transition: all 0.3s ease;
+          outline: none;
+          background: rgba($accent, 0.05);
+          color: $text;
+
+          &:focus {
+            border-color: $accent;
+            background-color: rgba($accent, 0.1);
+            box-shadow: 0 0 0 4px rgba($accent, 0.1);
+          }
+
+          &:disabled {
+            background-color: rgba($accent, 0.05);
+            color: $muted;
+            cursor: not-allowed;
+            opacity: 0.6;
+          }
+
+          &::placeholder {
+            color: rgba($text, 0.4);
+          }
+        }
+      }
+
+      button {
+        padding: 14px 24px;
+        background: $accent;
+        color: #022026;
+        border: none;
+        border-radius: 10px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 15px;
+        box-shadow: 0 4px 15px rgba($accent, 0.3);
+
+        &:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 30px rgba($accent, 0.4);
+        }
+
+        &:active:not(:disabled) {
+          transform: translateY(0);
+        }
+
+        &:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+      }
+    }
+
+    .error-message {
+      background: rgba($error-color, 0.1);
+      border: 1px solid rgba($error-color, 0.3);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: $error-color;
+      font-size: 14px;
+      text-align: center;
+      animation: shake 0.5s ease-in-out;
+      font-weight: 500;
+    }
+
+    p {
+      text-align: center;
+      margin: 25px 0 0 0;
+      color: $muted;
+      font-size: 14px;
+
+      a {
+        color: $accent;
+        text-decoration: none;
+        font-weight: 700;
+        transition: all 0.3s ease;
+
+        &:hover {
+          color: lighten($accent, 10%);
+          text-decoration: underline;
+        }
+      }
+    }
+  }
+}
+
+.toggle-form p {
+  color: #e6eef3;
+  font-size: 14px;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  color: #06b6d4;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  transition: color 0.2s ease;
+}
+
+.toggle-btn:hover {
+  color: #0891b2;
+}
+
+/* Адаптивность */
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 30px 20px;
+  }
+  
+  .auth-card h2 {
+    font-size: 24px;
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Nmap Port Scanner - Расширенное сетевое сканирование с NSE скриптами и CVE API
+Nmap Port Scanner - Расширенное сетевое сканирование с поддержкой веб-приложений
+Поддержка URL (http/https) и IP адресов
 Отчеты в JSON, TXT и WORD форматах (БЕЗ КЭШИРОВАНИЯ В БД)
 """
 
@@ -11,9 +12,11 @@ import os
 import time
 import argparse
 import re
+import ssl
+import socket
 from pathlib import Path
 from datetime import datetime, timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from typing import Dict, List, Optional, Any
 from colorama import Fore, Style, init
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -252,18 +255,22 @@ class CVESearcher:
         return results
 
 class NmapScanner(ReportBase):
-    """Расширенный сканер с поддержкой NSE скриптов и CVE API"""
+    """Расширенный сканер с поддержкой IP адресов и URL веб-приложений"""
     
     def __init__(self, target: str, output_base: str = None, reports_dir: str = None, nvd_api_key: str = None):
         """Инициализация сканера"""
         super().__init__('nmap', target, Path(reports_dir) if reports_dir else None)
         
         self.target = target
-        self.nm = nmap.PortScanner()
+        self.is_url = target.startswith(('http://', 'https://'))
+        self.is_ip = self._is_valid_ip_or_domain(target)
+        
         self.discovered_hosts = []
         self.open_ports = []
         self.vulnerabilities = []
+        self.web_vulnerabilities = []
         self.nse_results = []
+        self.web_info = {}
         self.scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.start_time = datetime.now()
         
@@ -273,7 +280,7 @@ class NmapScanner(ReportBase):
         if output_base:
             self.filename_base = output_base
         else:
-            safe_target = target.replace('/', '_').replace('\\', '_').replace(':', '_')
+            safe_target = target.replace('/', '_').replace('\\', '_').replace(':', '_').replace('?', '_')
             self.filename_base = f"nmap_{safe_target}_{self.scan_id}"
         
         self.scan_profile = "vuln"
@@ -281,14 +288,238 @@ class NmapScanner(ReportBase):
         self.word_dir = self.reports_dir / "word"
         self.word_dir.mkdir(parents=True, exist_ok=True)
         
+        # Для nmap сканирования
+        if HAS_NMAP:
+            self.nm = nmap.PortScanner()
+        else:
+            self.nm = None
+        
         print(f"{Fore.GREEN}[*] Папки для отчетов:")
         print(f"{Fore.GREEN}[*]   JSON: {self.json_dir}")
         print(f"{Fore.GREEN}[*]   TXT: {self.txt_dir}")
         print(f"{Fore.GREEN}[*]   WORD: {self.word_dir}")
+        print(f"{Fore.GREEN}[*] Тип цели: {'URL' if self.is_url else 'IP/Домен'}")
+    
+    def _is_valid_ip_or_domain(self, target: str) -> bool:
+        """Проверить валидность IP или домена"""
+        if target.startswith(('http://', 'https://')):
+            return True
+        
+        # Простая проверка IP
+        try:
+            socket.inet_aton(target.split(':')[0])
+            return True
+        except socket.error:
+            pass
+        
+        # Проверка домена
+        domain_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$'
+        return bool(re.match(domain_pattern, target.split(':')[0]))
+    
+    def _scan_web_application(self) -> bool:
+        """Сканирование веб-приложения через URL"""
+        print(f"{Fore.CYAN}[*] Сканирование веб-приложения: {self.target}")
+        
+        try:
+            # Парсим URL
+            parsed_url = urlparse(self.target)
+            host = parsed_url.hostname or self.target
+            port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
+            scheme = parsed_url.scheme or 'http'
+            
+            self.web_info = {
+                'url': self.target,
+                'host': host,
+                'port': port,
+                'scheme': scheme,
+                'technologies': [],
+                'headers': {},
+                'status_code': None,
+                'server': None,
+                'powered_by': None,
+                'issues': []
+            }
+            
+            # Проверяем соединение и получаем информацию
+            self._check_web_server()
+            self._check_ssl_certificate()
+            self._check_security_headers()
+            self._check_common_vulnerabilities()
+            
+            print(f"{Fore.GREEN}[+] Веб-сканирование завершено")
+            return True
+            
+        except Exception as e:
+            print(f"{Fore.RED}[!] Ошибка веб-сканирования: {e}")
+            self.web_vulnerabilities.append({
+                'type': 'Connection Error',
+                'severity': 'High',
+                'description': str(e),
+                'host': self.target
+            })
+            return False
+    
+    def _check_web_server(self):
+        """Проверка веб-сервера"""
+        try:
+            response = requests.head(
+                self.target,
+                timeout=10,
+                allow_redirects=True,
+                verify=False
+            )
+            
+            self.web_info['status_code'] = response.status_code
+            headers = response.headers
+            
+            self.web_info['server'] = headers.get('Server', 'Unknown')
+            self.web_info['powered_by'] = headers.get('X-Powered-By', None)
+            self.web_info['headers'] = dict(headers)
+            
+            # Определяем технологии
+            if 'Apache' in self.web_info['server']:
+                self.web_info['technologies'].append('Apache')
+            if 'nginx' in self.web_info['server']:
+                self.web_info['technologies'].append('Nginx')
+            if 'IIS' in self.web_info['server']:
+                self.web_info['technologies'].append('IIS')
+            if 'Powered-by' in headers and 'PHP' in headers.get('X-Powered-By', ''):
+                self.web_info['technologies'].append('PHP')
+            
+        except Exception as e:
+            print(f"{Fore.YELLOW}[!] Ошибка проверки сервера: {e}")
+    
+    def _check_ssl_certificate(self):
+        """Проверка SSL сертификата"""
+        if not self.target.startswith('https'):
+            return
+        
+        try:
+            parsed_url = urlparse(self.target)
+            hostname = parsed_url.hostname
+            port = parsed_url.port or 443
+            
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    
+                    if cert:
+                        # Проверка срока действия
+                        not_after = cert.get('notAfter')
+                        if not_after:
+                            self.web_info['ssl_expires'] = not_after
+                            
+                            try:
+                                from ssl import cert_time_to_seconds
+                                expire_time = cert_time_to_seconds(not_after)
+                                days_left = (expire_time - time.time()) / 86400
+                                
+                                if days_left < 0:
+                                    self.web_vulnerabilities.append({
+                                        'type': 'SSL Certificate Expired',
+                                        'severity': 'Critical',
+                                        'description': f'SSL сертификат истек {abs(int(days_left))} дней назад',
+                                        'host': self.target
+                                    })
+                                elif days_left < 30:
+                                    self.web_vulnerabilities.append({
+                                        'type': 'SSL Certificate Expires Soon',
+                                        'severity': 'High',
+                                        'description': f'SSL сертификат истечет через {int(days_left)} дней',
+                                        'host': self.target
+                                    })
+                            except:
+                                pass
+        except Exception as e:
+            print(f"{Fore.YELLOW}[!] Ошибка проверки SSL: {e}")
+    
+    def _check_security_headers(self):
+        """Проверка безопасности заголовков"""
+        headers_to_check = {
+            'X-Frame-Options': 'Защита от Clickjacking',
+            'X-Content-Type-Options': 'Защита от MIME sniffing',
+            'Content-Security-Policy': 'Политика безопасности контента',
+            'Strict-Transport-Security': 'Принудительное HTTPS',
+            'X-XSS-Protection': 'Защита от XSS'
+        }
+        
+        try:
+            response = requests.head(
+                self.target,
+                timeout=10,
+                allow_redirects=True,
+                verify=False
+            )
+            
+            for header, description in headers_to_check.items():
+                if header not in response.headers:
+                    self.web_vulnerabilities.append({
+                        'type': f'Missing {header}',
+                        'severity': 'Medium',
+                        'description': f'Отсутствует заголовок: {description}',
+                        'header': header,
+                        'host': self.target
+                    })
+        except Exception as e:
+            print(f"{Fore.YELLOW}[!] Ошибка проверки заголовков: {e}")
+    
+    def _check_common_vulnerabilities(self):
+        """Проверка общих уязвимостей"""
+        common_urls = [
+            '/admin/',
+            '/.git/',
+            '/.env',
+            '/backup/',
+            '/config/',
+            '/web.config',
+            '/xmlrpc.php',
+            '/.htaccess',
+            '/wp-admin/',
+            '/.well-known/'
+        ]
+        
+        try:
+            for url_path in common_urls:
+                try:
+                    response = requests.get(
+                        self.target.rstrip('/') + url_path,
+                        timeout=5,
+                        verify=False,
+                        allow_redirects=False
+                    )
+                    
+                    if response.status_code in [200, 301, 302]:
+                        severity = 'Critical' if url_path in ['/.env', '/web.config'] else 'High'
+                        self.web_vulnerabilities.append({
+                            'type': 'Exposed Directory/File',
+                            'severity': severity,
+                            'description': f'Обнаружена открытая директория/файл: {url_path} (HTTP {response.status_code})',
+                            'url': self.target.rstrip('/') + url_path,
+                            'host': self.target
+                        })
+                except requests.Timeout:
+                    pass
+                except:
+                    pass
+        except Exception as e:
+            print(f"{Fore.YELLOW}[!] Ошибка проверки уязвимостей: {e}")
     
     def run_scan(self, arguments: str = None, scan_profile: str = "vuln") -> bool:
-        """Запуск Nmap сканирования"""
+        """Запуск сканирования (URL или IP)"""
         self.scan_profile = scan_profile
+        
+        # Если это URL, сканируем как веб-приложение
+        if self.is_url:
+            return self._scan_web_application()
+        
+        # Иначе используем Nmap для сетевого сканирования
+        if not HAS_NMAP or not self.nm:
+            print(f"{Fore.RED}[!] python-nmap не установлен. Используйте веб-сканирование через URL")
+            return False
         
         profiles = {
             "quick": "-sV --top-ports 100 -T4 --min-rate 1000",
@@ -315,6 +546,14 @@ class NmapScanner(ReportBase):
     
     def parse_results(self, search_cves: bool = True):
         """Парсинг результатов Nmap"""
+        # Если это был веб-скан, результаты уже обработаны
+        if self.is_url:
+            return
+        
+        # Для Nmap сканирования
+        if not self.nm:
+            return
+        
         try:
             ports_for_cve = []
             
@@ -396,7 +635,8 @@ class NmapScanner(ReportBase):
         """Получить сводку"""
         severity_counts = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0, 'Unknown': 0}
         
-        for vuln in self.vulnerabilities:
+        all_vulns = self.vulnerabilities + self.web_vulnerabilities
+        for vuln in all_vulns:
             severity = vuln.get('severity', 'Unknown')
             if severity in severity_counts:
                 severity_counts[severity] += 1
@@ -406,66 +646,138 @@ class NmapScanner(ReportBase):
             'scan_duration': (datetime.now() - self.start_time).total_seconds(),
             'total_hosts': len(self.discovered_hosts),
             'total_ports': len(self.open_ports),
-            'total_vulnerabilities': len(self.vulnerabilities),
+            'total_vulnerabilities': len(all_vulns),
             'severity_breakdown': severity_counts,
-            'scan_profile': self.scan_profile
+            'scan_profile': self.scan_profile,
+            'is_web_scan': self.is_url
         }
     
     def get_json_report(self) -> Dict:
         """Получить JSON отчет"""
         summary = self.get_summary()
         
-        return {
-            'scan_info': {
-                'target': self.target,
-                'scan_id': self.scan_id,
-                'scan_datetime': self.start_time.isoformat(),
-                'scan_duration': summary['scan_duration'],
-                'profile': self.scan_profile
-            },
-            'summary': summary,
-            'discovered_hosts': self.discovered_hosts,
-            'open_ports': self.open_ports,
-            'vulnerabilities': self.vulnerabilities
-        }
+        if self.is_url:
+            # Для веб-приложений
+            return {
+                'scan_info': {
+                    'target': self.target,
+                    'scan_id': self.scan_id,
+                    'scan_datetime': self.start_time.isoformat(),
+                    'scan_duration': summary['scan_duration'],
+                    'profile': self.scan_profile,
+                    'type': 'web_application'
+                },
+                'summary': summary,
+                'web_info': self.web_info,
+                'vulnerabilities': self.web_vulnerabilities
+            }
+        else:
+            # Для сетевого сканирования
+            return {
+                'scan_info': {
+                    'target': self.target,
+                    'scan_id': self.scan_id,
+                    'scan_datetime': self.start_time.isoformat(),
+                    'scan_duration': summary['scan_duration'],
+                    'profile': self.scan_profile,
+                    'type': 'network_scan'
+                },
+                'summary': summary,
+                'discovered_hosts': self.discovered_hosts,
+                'open_ports': self.open_ports,
+                'vulnerabilities': self.vulnerabilities
+            }
     
     def _generate_txt_report(self) -> str:
         """Генерировать TXT отчет"""
         summary = self.get_summary()
-        lines = [
-            "=" * 100,
-            "ОТЧЕТ СКАНИРОВАНИЯ NMAP".center(100),
-            "=" * 100,
-            "",
-            f"Хост: {self.target}",
-            f"ID: {self.scan_id}",
-            f"Дата: {self.start_time.strftime('%d.%m.%Y %H:%M:%S')}",
-            f"Профиль: {self.scan_profile}",
-            f"Длительность: {summary['scan_duration']:.2f} сек",
-            "",
-            "СТАТИСТИКА",
-            f"  Хостов: {summary['total_hosts']}",
-            f"  Портов: {summary['total_ports']}",
-            f"  Уязвимостей: {summary['total_vulnerabilities']}",
-            "",
-            "СЕРЬЕЗНОСТЬ",
-            f"  Критические: {summary['severity_breakdown']['Critical']}",
-            f"  Высокие: {summary['severity_breakdown']['High']}",
-            f"  Средние: {summary['severity_breakdown']['Medium']}",
-            f"  Низкие: {summary['severity_breakdown']['Low']}",
-            ""
-        ]
         
-        if self.vulnerabilities:
-            lines.append("УЯЗВИМОСТИ")
-            for i, vuln in enumerate(self.vulnerabilities, 1):
-                lines.append(f"\n[{i}] {vuln.get('cve_id', 'N/A')}")
-                lines.append(f"  Severity: {vuln.get('severity', 'Unknown')}")
-                lines.append(f"  Service: {vuln.get('service', 'N/A')} {vuln.get('version', '')}")
-                lines.append(f"  Port: {vuln.get('port', 'N/A')}")
+        if self.is_url:
+            # Отчет для веб-приложения
+            lines = [
+                "=" * 100,
+                "ОТЧЕТ СКАНИРОВАНИЯ ВЕБ-ПРИЛОЖЕНИЯ".center(100),
+                "=" * 100,
+                "",
+                f"URL: {self.target}",
+                f"Host: {self.web_info.get('host', 'N/A')}",
+                f"Port: {self.web_info.get('port', 'N/A')}",
+                f"ID: {self.scan_id}",
+                f"Дата: {self.start_time.strftime('%d.%m.%Y %H:%M:%S')}",
+                f"Длительность: {summary['scan_duration']:.2f} сек",
+                "",
+                "ИНФОРМАЦИЯ О СЕРВЕРЕ",
+                f"  Статус: HTTP {self.web_info.get('status_code', 'N/A')}",
+                f"  Server: {self.web_info.get('server', 'Unknown')}",
+                f"  Powered-By: {self.web_info.get('powered_by', 'N/A')}",
+                f"  Технологии: {', '.join(self.web_info.get('technologies', ['N/A']))}",
+                ""
+            ]
+            
+            if self.web_info.get('ssl_expires'):
+                lines.append(f"  SSL Expires: {self.web_info.get('ssl_expires')}")
+            
+            lines.extend([
+                "",
+                "СТАТИСТИКА",
+                f"  Всего уязвимостей: {len(self.web_vulnerabilities)}",
+                f"  Критические: {summary['severity_breakdown']['Critical']}",
+                f"  Высокие: {summary['severity_breakdown']['High']}",
+                f"  Средние: {summary['severity_breakdown']['Medium']}",
+                f"  Низкие: {summary['severity_breakdown']['Low']}",
+                ""
+            ])
+            
+            if self.web_vulnerabilities:
+                lines.append("НАЙДЕННЫЕ УЯЗВИМОСТИ")
+                for i, vuln in enumerate(self.web_vulnerabilities, 1):
+                    lines.append(f"\n[{i}] {vuln.get('type', 'Unknown')}")
+                    lines.append(f"  Severity: {vuln.get('severity', 'Unknown')}")
+                    lines.append(f"  Description: {vuln.get('description', 'N/A')}")
+                    if vuln.get('header'):
+                        lines.append(f"  Header: {vuln.get('header')}")
+                    if vuln.get('url'):
+                        lines.append(f"  URL: {vuln.get('url')}")
+            
+            lines.extend(["", "=" * 100])
+            return "\n".join(lines)
         
-        lines.extend(["", "=" * 100])
-        return "\n".join(lines)
+        else:
+            # Отчет для Nmap сканирования
+            lines = [
+                "=" * 100,
+                "ОТЧЕТ СКАНИРОВАНИЯ NMAP".center(100),
+                "=" * 100,
+                "",
+                f"Хост: {self.target}",
+                f"ID: {self.scan_id}",
+                f"Дата: {self.start_time.strftime('%d.%m.%Y %H:%M:%S')}",
+                f"Профиль: {self.scan_profile}",
+                f"Длительность: {summary['scan_duration']:.2f} сек",
+                "",
+                "СТАТИСТИКА",
+                f"  Хостов: {summary['total_hosts']}",
+                f"  Портов: {summary['total_ports']}",
+                f"  Уязвимостей: {summary['total_vulnerabilities']}",
+                "",
+                "СЕРЬЕЗНОСТЬ",
+                f"  Критические: {summary['severity_breakdown']['Critical']}",
+                f"  Высокие: {summary['severity_breakdown']['High']}",
+                f"  Средние: {summary['severity_breakdown']['Medium']}",
+                f"  Низкие: {summary['severity_breakdown']['Low']}",
+                ""
+            ]
+            
+            if self.vulnerabilities:
+                lines.append("УЯЗВИМОСТИ")
+                for i, vuln in enumerate(self.vulnerabilities, 1):
+                    lines.append(f"\n[{i}] {vuln.get('cve_id', 'N/A')}")
+                    lines.append(f"  Severity: {vuln.get('severity', 'Unknown')}")
+                    lines.append(f"  Service: {vuln.get('service', 'N/A')} {vuln.get('version', '')}")
+                    lines.append(f"  Port: {vuln.get('port', 'N/A')}")
+            
+            lines.extend(["", "=" * 100])
+            return "\n".join(lines)
     
     def _generate_word_report(self) -> Optional[str]:
         """Генерировать Word отчет"""
@@ -476,40 +788,91 @@ class NmapScanner(ReportBase):
             summary = self.get_summary()
             doc = Document()
             
-            doc.add_heading('ОТЧЕТ СКАНИРОВАНИЯ NMAP', 0)
-            
-            doc.add_heading('ИНФОРМАЦИЯ', level=1)
-            table = doc.add_table(rows=5, cols=2)
-            table.style = 'Light Grid Accent 1'
-            data = [
-                ('Хост:', self.target),
-                ('ID:', self.scan_id),
-                ('Дата:', self.start_time.strftime('%d.%m.%Y %H:%M:%S')),
-                ('Профиль:', self.scan_profile),
-                ('Длительность:', f"{summary['scan_duration']:.2f} сек"),
-            ]
-            for i, (k, v) in enumerate(data):
-                table.rows[i].cells[0].text = k
-                table.rows[i].cells[1].text = str(v)
-            
-            doc.add_heading('УЯЗВИМОСТИ', level=1)
-            if self.vulnerabilities:
-                table = doc.add_table(rows=1, cols=5)
-                table.style = 'Light Grid Accent 1'
-                hdr = table.rows[0].cells
-                hdr[0].text = 'CVE'
-                hdr[1].text = 'Severity'
-                hdr[2].text = 'Service'
-                hdr[3].text = 'Port'
-                hdr[4].text = 'Version'
+            if self.is_url:
+                # Отчет для веб-приложения
+                doc.add_heading('ОТЧЕТ СКАНИРОВАНИЯ ВЕБ-ПРИЛОЖЕНИЯ', 0)
                 
-                for vuln in self.vulnerabilities[:50]:
-                    row = table.add_row().cells
-                    row[0].text = vuln.get('cve_id', 'N/A')
-                    row[1].text = vuln.get('severity', 'Unknown')
-                    row[2].text = vuln.get('service', 'N/A')
-                    row[3].text = str(vuln.get('port', 'N/A'))
-                    row[4].text = vuln.get('version', '')
+                doc.add_heading('ИНФОРМАЦИЯ', level=1)
+                table = doc.add_table(rows=6, cols=2)
+                table.style = 'Light Grid Accent 1'
+                data = [
+                    ('URL:', self.target),
+                    ('Host:', self.web_info.get('host', 'N/A')),
+                    ('Port:', str(self.web_info.get('port', 'N/A'))),
+                    ('ID:', self.scan_id),
+                    ('Дата:', self.start_time.strftime('%d.%m.%Y %H:%M:%S')),
+                    ('Длительность:', f"{summary['scan_duration']:.2f} сек"),
+                ]
+                for i, (k, v) in enumerate(data):
+                    table.rows[i].cells[0].text = k
+                    table.rows[i].cells[1].text = str(v)
+                
+                doc.add_heading('СЕРВЕР', level=1)
+                table = doc.add_table(rows=4, cols=2)
+                table.style = 'Light Grid Accent 1'
+                server_data = [
+                    ('HTTP Статус:', str(self.web_info.get('status_code', 'N/A'))),
+                    ('Server:', self.web_info.get('server', 'Unknown')),
+                    ('Powered-By:', self.web_info.get('powered_by', 'N/A')),
+                    ('Технологии:', ', '.join(self.web_info.get('technologies', ['N/A']))),
+                ]
+                for i, (k, v) in enumerate(server_data):
+                    table.rows[i].cells[0].text = k
+                    table.rows[i].cells[1].text = str(v)
+                
+                if self.web_vulnerabilities:
+                    doc.add_heading('УЯЗВИМОСТИ', level=1)
+                    table = doc.add_table(rows=1, cols=4)
+                    table.style = 'Light Grid Accent 1'
+                    hdr = table.rows[0].cells
+                    hdr[0].text = 'Тип'
+                    hdr[1].text = 'Severity'
+                    hdr[2].text = 'Описание'
+                    hdr[3].text = 'URL/Заголовок'
+                    
+                    for vuln in self.web_vulnerabilities[:50]:
+                        row = table.add_row().cells
+                        row[0].text = vuln.get('type', 'N/A')
+                        row[1].text = vuln.get('severity', 'Unknown')
+                        row[2].text = vuln.get('description', 'N/A')[:50]
+                        row[3].text = vuln.get('url', vuln.get('header', 'N/A'))
+            
+            else:
+                # Отчет для Nmap
+                doc.add_heading('ОТЧЕТ СКАНИРОВАНИЯ NMAP', 0)
+                
+                doc.add_heading('ИНФОРМАЦИЯ', level=1)
+                table = doc.add_table(rows=5, cols=2)
+                table.style = 'Light Grid Accent 1'
+                data = [
+                    ('Хост:', self.target),
+                    ('ID:', self.scan_id),
+                    ('Дата:', self.start_time.strftime('%d.%m.%Y %H:%M:%S')),
+                    ('Профиль:', self.scan_profile),
+                    ('Длительность:', f"{summary['scan_duration']:.2f} сек"),
+                ]
+                for i, (k, v) in enumerate(data):
+                    table.rows[i].cells[0].text = k
+                    table.rows[i].cells[1].text = str(v)
+                
+                doc.add_heading('УЯЗВИМОСТИ', level=1)
+                if self.vulnerabilities:
+                    table = doc.add_table(rows=1, cols=5)
+                    table.style = 'Light Grid Accent 1'
+                    hdr = table.rows[0].cells
+                    hdr[0].text = 'CVE'
+                    hdr[1].text = 'Severity'
+                    hdr[2].text = 'Service'
+                    hdr[3].text = 'Port'
+                    hdr[4].text = 'Version'
+                    
+                    for vuln in self.vulnerabilities[:50]:
+                        row = table.add_row().cells
+                        row[0].text = vuln.get('cve_id', 'N/A')
+                        row[1].text = vuln.get('severity', 'Unknown')
+                        row[2].text = vuln.get('service', 'N/A')
+                        row[3].text = str(vuln.get('port', 'N/A'))
+                        row[4].text = vuln.get('version', '')
             
             word_path = self.word_dir / f"{self.filename_base}.docx"
             doc.save(str(word_path))
@@ -578,7 +941,8 @@ class NmapScanner(ReportBase):
         """Подсчет уязвимостей по серьезности (для server.py)"""
         severity_counts = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0, 'Unknown': 0}
         
-        for vuln in self.vulnerabilities:
+        all_vulns = self.vulnerabilities + self.web_vulnerabilities
+        for vuln in all_vulns:
             severity = vuln.get('severity', 'Unknown')
             if severity in severity_counts:
                 severity_counts[severity] += 1
@@ -589,18 +953,36 @@ class NmapScanner(ReportBase):
 
     def _get_recommendations(self) -> List[str]:
         """Получить рекомендации (для server.py)"""
-        recommendations = [
-            'Закройте ненужные открытые порты',
-            'Обновите все обнаруженные сервисы',
-            'Используйте минимально необходимые сервисы',
-            'Настройте firewall для ограничения доступа',
-            'Регулярно проводите сканирования портов'
-        ]
-        
-        if self.vulnerabilities:
-            recommendations.append('Обновите уязвимые сервисы как можно скорее')
-        
-        return recommendations
+        if self.is_url:
+            # Рекомендации для веб-приложений
+            recommendations = [
+                'Добавьте все рекомендуемые заголовки безопасности',
+                'Включите HTTPS и HSTS',
+                'Обновите все уязвимые компоненты',
+                'Проведите аудит безопасности кода',
+                'Используйте Web Application Firewall (WAF)'
+            ]
+            
+            if self.web_vulnerabilities:
+                critical_count = sum(1 for v in self.web_vulnerabilities if v.get('severity') == 'Critical')
+                if critical_count > 0:
+                    recommendations.insert(0, f'КРИТИЧНО: Закрытие обнаруженных {critical_count} критических уязвимостей!')
+            
+            return recommendations
+        else:
+            # Рекомендации для сетевого сканирования
+            recommendations = [
+                'Закройте ненужные открытые порты',
+                'Обновите все обнаруженные сервисы',
+                'Используйте минимально необходимые сервисы',
+                'Настройте firewall для ограничения доступа',
+                'Регулярно проводите сканирования портов'
+            ]
+            
+            if self.vulnerabilities:
+                recommendations.append('Обновите уязвимые сервисы как можно скорее')
+            
+            return recommendations
 
     def scan(self):
         """Метод для совместимости с callback"""
@@ -610,33 +992,91 @@ class NmapScanner(ReportBase):
         """Метод для совместимости с callback"""
         self.print_report()
 
+    def _save_json_internal(self) -> Optional[str]:
+        """Сохранить JSON отчет (внутренний метод)"""
+        try:
+            json_path = self.json_dir / f"{self.filename_base}.json"
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(self.get_json_report(), f, indent=2, ensure_ascii=False)
+            print(f"{Fore.GREEN}[+] JSON отчет сохранен: {json_path}")
+            return str(json_path)
+        except Exception as e:
+            print(f"{Fore.RED}[!] Ошибка сохранения JSON: {e}")
+            return None
+
+    def _save_txt_internal(self) -> Optional[str]:
+        """Сохранить TXT отчет (внутренний метод)"""
+        try:
+            txt_path = self.txt_dir / f"{self.filename_base}.txt"
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(self._generate_txt_report())
+            print(f"{Fore.GREEN}[+] TXT отчет сохранен: {txt_path}")
+            return str(txt_path)
+        except Exception as e:
+            print(f"{Fore.RED}[!] Ошибка сохранения TXT: {e}")
+            return None
+    
     def save_json_report(self):
         """Сохранить JSON"""
-        return super().save_json_report(self.get_json_report())
+        return self._save_json_internal()
     
     def save_txt_report(self):
         """Сохранить TXT"""
-        try:
-            return super().save_txt_report(self._generate_txt_report())
-        except Exception as e:
-            print(f"{Fore.RED}[!] TXT ошибка: {e}")
+        return self._save_txt_internal()
+    
+    def save_reports(self) -> Dict[str, str]:
+        """Сохранить JSON и TXT отчеты (для совместимости с server.py)"""
+        reports = {}
+        
+        # Сохраняем JSON
+        json_path = self._save_json_internal()
+        if json_path:
+            reports['json'] = json_path
+        
+        # Сохраняем TXT
+        txt_path = self._save_txt_internal()
+        if txt_path:
+            reports['txt'] = txt_path
+        
+        # Сохраняем WORD если доступен
+        if HAS_DOCX:
+            word_path = self._generate_word_report()
+            if word_path:
+                reports['word'] = word_path
+        
+        return reports
 
 
 def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> Dict:
-    """Простая функция для server.py"""
+    """Простая функция для server.py - поддержка URL и IP"""
     scanner = NmapScanner(target=target, reports_dir=reports_dir)
     
     if scanner.run_scan(scan_profile=profile):
         scanner.parse_results(search_cves=True)
-        return {
-            'status': 'success',
-            'target': target,
-            'scan_id': scanner.scan_id,
-            'summary': scanner.get_summary(),
-            'vulnerabilities': scanner.vulnerabilities,
-            'open_ports': scanner.open_ports,
-            'discovered_hosts': scanner.discovered_hosts
-        }
+        
+        if scanner.is_url:
+            # Для веб-приложений
+            return {
+                'status': 'success',
+                'target': target,
+                'scan_id': scanner.scan_id,
+                'summary': scanner.get_summary(),
+                'web_info': scanner.web_info,
+                'vulnerabilities': scanner.web_vulnerabilities,
+                'type': 'web_application'
+            }
+        else:
+            # Для сетевого сканирования
+            return {
+                'status': 'success',
+                'target': target,
+                'scan_id': scanner.scan_id,
+                'summary': scanner.get_summary(),
+                'vulnerabilities': scanner.vulnerabilities,
+                'open_ports': scanner.open_ports,
+                'discovered_hosts': scanner.discovered_hosts,
+                'type': 'network_scan'
+            }
     else:
         return {'status': 'error', 'target': target, 'message': 'Scan failed'}
 
@@ -644,14 +1084,14 @@ def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> 
 def main():
     """Основная функция"""
     parser = argparse.ArgumentParser(
-        description='Advanced Nmap Scanner with CVE API',
-        epilog='Examples:\n  python nmap_scanner.py 192.168.1.1\n  python nmap_scanner.py example.com -p quick'
+        description='Advanced Nmap/Web Scanner with CVE API',
+        epilog='Examples:\n  python nmap_scanner.py 192.168.1.1\n  python nmap_scanner.py http://127.0.0.1:5012/\n  python nmap_scanner.py example.com -p quick'
     )
     
-    parser.add_argument('target', help='Target IP or domain')
+    parser.add_argument('target', help='Target IP, domain or URL (http/https)')
     parser.add_argument('-p', '--profile', default='vuln', 
                        choices=['quick', 'full', 'vuln', 'stealth', 'web', 'discovery'],
-                       help='Scan profile')
+                       help='Scan profile (for network scans)')
     parser.add_argument('-a', '--arguments', help='Custom Nmap arguments')
     parser.add_argument('-o', '--output', help='Output filename')
     parser.add_argument('-r', '--reports-dir', default='./reports', help='Reports directory')
@@ -660,7 +1100,7 @@ def main():
     args = parser.parse_args()
     
     print(f"{Fore.CYAN}╔{'═'*70}╗")
-    print(f"║{'ADVANCED NMAP SCANNER v3.0'.center(70)}║")
+    print(f"║{'ADVANCED SCANNER (Network & Web) v4.0'.center(70)}║")
     print(f"╚{'═'*70}╝{Fore.RESET}\n")
     
     scanner = NmapScanner(

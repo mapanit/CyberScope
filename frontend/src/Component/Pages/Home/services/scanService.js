@@ -6,11 +6,18 @@ export const scanService = {
         const toolsParam = tools.join(',');
         const endpoint = `/api/run-selected-tools?target=${encodeURIComponent(target)}&tools=${encodeURIComponent(toolsParam)}&allow_internal=${allowInternal}`;
         
+        // Получаем токен из localStorage
+        const token = localStorage.getItem('token');
+        if (!token) {
+            throw new Error('Требуется аутентификация. Пожалуйста, войдите.');
+        }
+        
         const response = await fetch(`http://localhost:8000${endpoint}`, {
             method: 'POST',
             headers: {
                 'Accept': 'application/json',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
             signal: abortSignal
         });
