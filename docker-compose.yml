@@ -4,19 +4,17 @@ services:
       context: ./backend
       dockerfile: Dockerfile.api
     container_name: cyberscope-backend
-    ports:
-      - "8000:8000"
+    network_mode: "host"
     volumes:
       - ./backend:/app
-      - ./backend/reports:/app/reports  # Монтируем папку с отчетами
+      - ./backend/reports:/app/reports
     environment:
       - PYTHONUNBUFFERED=1
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    networks:
-      - cyberscope-network
 
+    
   bot:
     build:
       context: ./backend

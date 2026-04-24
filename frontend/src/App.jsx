@@ -1,9 +1,4 @@
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  useLocation,
-} from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -14,11 +9,10 @@ import Search from "./Component/Pages/Home/Home";
 import Footer from "./Component/Footer/Footer";
 import AboutTools from "./Component/Pages/AboutTools/AboutTools";
 import Questions from "./Component/Pages/Questions/Questions";
-import Analytic from "./Component/Pages/Analytics/Analytic";
+import Task from "./Component/Pages/Task/Task";
 import Modal from "./Component/Modal/Modal";
 import Help from "./Component/Pages/Help/Help";
 import ProjectDashboard from "./Component/Pages/ProjectDashboard/ProjectDashboard";
-import Login from "./Component/Pages/Login/Login";
 
 const pageVariants = {
   initial: {
@@ -91,89 +85,120 @@ function App() {
   const [activeHeader, setActiveHeader] = useState(true);
   const [activeModal, setActiveModal] = useState(false);
 
+  const [token, setToken] = useState(localStorage.getItem("token"));
+
+  // Скрываем Header и Footer на auth страницах
+  const isAuthPage = ['/login', '/register'].includes(location.pathname);
+
+  useEffect(() => {
+    if (token) {
+      localStorage.setItem("token", token);
+    } else {
+      localStorage.removeItem("token");
+    }
+  }, [token]);
+
+  const handleLogout = () => {
+    setToken(null);
+    localStorage.removeItem("token");
+  };
+
   const toggleLanguage = () => {
     setLanguage((prevLang) => (prevLang === "ru" ? "en" : "ru"));
   };
 
   return (
     <div className="App">
-      <Header
-        activeHeader={activeHeader}
-        setActiveHeader={setActiveHeader}
-        toggleLanguage={toggleLanguage}
-        language={language}
-      />
+      {!isAuthPage && (
+        <Header
+          activeHeader={activeHeader}
+          setActiveHeader={setActiveHeader}
+          toggleLanguage={toggleLanguage}
+          language={language}
+          onLogout={handleLogout}
+          isAuthenticated={!!token}
+        />
+      )}
 
       <AnimatePresence mode="wait">
         <Routes location={location} key={location.pathname}>
           <Route
             path="/"
             element={
-              <AnimatedPage>
-                <Search language={language} />
-              </AnimatedPage>
+              <ProtectedRoute token={token}>
+                <AnimatedPage>
+                  <Search language={language} />
+                </AnimatedPage>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/about-tools"
             element={
-              <AnimatedPage>
-                <AboutTools
-                  activeModal={activeModal}
-                  setActiveModal={setActiveModal}
-                  language={language}
-                />
-              </AnimatedPage>
+              <ProtectedRoute token={token}>
+                <AnimatedPage>
+                  <AboutTools
+                    activeModal={activeModal}
+                    setActiveModal={setActiveModal}
+                    language={language}
+                  />
+                </AnimatedPage>
+              </ProtectedRoute>
             }
           />
           <Route
-            path="/questions"
+            path="/analytic"
             element={
-              <AnimatedPage>
-                <Questions language={language} />
-              </AnimatedPage>
-            }
-          />
-          <Route
-            path="/Analytic"
-            element={
-              <AnimatedPage>
-                <Analytic language={language} />
-              </AnimatedPage>
+              <ProtectedRoute token={token}>
+                <AnimatedPage>
+                  <Analytic language={language} />
+                </AnimatedPage>
+              </ProtectedRoute>
             }
           />
           <Route
             path="/help"
             element={
+              <ProtectedRoute token={token}>
+                <AnimatedPage>
+                  <Help language={language} />
+                </AnimatedPage>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/task"
+            element={
               <AnimatedPage>
-                <Help language={language} />
+                <Task language={language} />
               </AnimatedPage>
             }
           />
           <Route
             path="/login"
             element={
-              <AnimatedPage>
-                <Login language={language} />
-              </AnimatedPage>
+              !token ? (
+                <AnimatedPage>
+                  <Login setToken={setToken} />
+                </AnimatedPage>
+              ) : (
+                <Navigate to="/" replace />
+              )
             }
           />
           <Route
-            path="/login"
+            path="user"
             element={
-              <AnimatedPage>
-                <Login language={language} />
-              </AnimatedPage>
+              token ? (
+                <AnimatedPage>
+                  <Dashboard token={token} onLogout={handleLogout} />
+                </AnimatedPage>
+              ) : (
+                <Navigate to="/login" replace />
+              )
             }
           />
-          <Route
-            path="/user"
-            element={
-              <AnimatedPage>
-                <ProjectDashboard language={language} />
-              </AnimatedPage>
-            }
-          />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AnimatePresence>
 
@@ -194,7 +219,7 @@ function App() {
         )}
       </AnimatePresence>
 
-      <Footer language={language} />
+      {!isAuthPage && <Footer language={language} />}
     </div>
   );
 }

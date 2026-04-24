@@ -1,5 +1,4 @@
 fastapi
-bs4
 uvicorn
 requests
 validators
@@ -18,8 +17,10 @@ python-dotenv
 aiohttp
 aiogram
 nvdlib
-sqlalchemy 
-psycopg2-binary 
-python-jose 
-passlib 
+cryptography
+pyOpenSSL
+beautifulsoup4
+sqlalchemy
+passlib[bcrypt]
+python-jose[cryptography]
 python-multipart

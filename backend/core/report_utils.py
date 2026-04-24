@@ -57,6 +57,8 @@ class ReportBase(ABC):
         # Создаем директории
         for directory in [self.json_dir, self.txt_dir]:
             directory.mkdir(parents=True, exist_ok=True)
+            # Установка прав доступа для директорий
+            os.chmod(directory, 0o755)
 
         self.filename_base = f"{tool_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -71,6 +73,9 @@ class ReportBase(ABC):
 
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        # Установка прав доступа для чтения всем пользователям
+        os.chmod(report_path, 0o644)
 
         print(f"[+] JSON отчет {self.tool_name} сохранен: {report_path}")
         return str(report_path)
@@ -81,6 +86,9 @@ class ReportBase(ABC):
 
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(content)
+        
+        # Установка прав доступа для чтения всем пользователям
+        os.chmod(report_path, 0o644)
 
         print(f"[+] TXT отчет {self.tool_name} сохранен: {report_path}")
         return str(report_path)
@@ -113,6 +121,8 @@ class CombinedReport:
         # Создаем директории
         for directory in [self.json_dir, self.txt_dir, self.word_dir]:
             directory.mkdir(parents=True, exist_ok=True)
+            # Установка прав доступа для директорий
+            os.chmod(directory, 0o755)
 
         self.filename_base = f"combined_report_{scan_id}"
         self.tool_reports = {}
@@ -288,6 +298,8 @@ class CombinedReport:
 
         # Создаем директорию если нужно
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Установка прав доступа для директорий
+        os.chmod(output_path.parent, 0o755)
 
         try:
             # Порядок инструментов для объединения
@@ -378,6 +390,9 @@ class CombinedReport:
                         print(f"    {tool_name:15} - {'ошибка':>5}")
             print(f"    {'─' * 20}")
             print(f"    {'ВСЕГО':15} - {total_lines:5} строк")
+            
+            # Установка прав доступа для чтения всем пользователям
+            os.chmod(output_path, 0o644)
 
             return str(output_path)
 
@@ -405,6 +420,8 @@ class CombinedReport:
             output_path = Path(output_path)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Установка прав доступа для директорий
+        os.chmod(output_path.parent, 0o755)
 
         try:
             with open(output_path, 'w', encoding='utf-8') as output_file:
@@ -458,6 +475,10 @@ class CombinedReport:
 """)
 
             print(f"[+] TXT отчеты успешно объединены в {output_path}")
+            
+            # Установка прав доступа для чтения всем пользователям
+            os.chmod(output_path, 0o644)
+            
             return str(output_path)
 
         except Exception as e:
@@ -777,6 +798,9 @@ class CombinedReport:
 
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        # Установка прав доступа для чтения всем пользователям
+        os.chmod(report_path, 0o644)
 
         print(f"[+] Объединенный JSON отчет сохранен: {report_path}")
         return str(report_path)
@@ -835,6 +859,8 @@ class CombinedReport:
             output_path = Path(output_path)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Установка прав доступа для директорий
+        os.chmod(output_path.parent, 0o755)
 
         try:
             print(f"[*] Начинаю преобразование TXT в DOCX: {txt_file_path.name} ({file_size_mb:.2f} MB)")
@@ -857,6 +883,9 @@ class CombinedReport:
             # Сохраняем документ
             print(f"[*] Сохраняю DOCX документ...")
             doc.save(str(output_path))
+            
+            # Установка прав доступа для чтения всем пользователям
+            os.chmod(output_path, 0o644)
             
             output_size_mb = output_path.stat().st_size / (1024 * 1024)
             print(f"[+] DOCX отчет успешно сохранен!")
@@ -1252,6 +1281,8 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
         output_path = Path(output_path)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Установка прав доступа для директорий
+    os.chmod(output_path.parent, 0o755)
 
     try:
         print(f"[*] Начинаю преобразование TXT в DOCX: {txt_path.name} ({file_size_mb:.2f} MB)")
@@ -1274,6 +1305,9 @@ def txt_to_docx_file(txt_path: str, output_path: Optional[str] = None) -> str:
         # Сохраняем
         print(f"[*] Сохраняю DOCX документ...")
         doc.save(str(output_path))
+        
+        # Установка прав доступа для чтения всем пользователям
+        os.chmod(output_path, 0o644)
         
         output_size_mb = output_path.stat().st_size / (1024 * 1024)
         print(f"[+] DOCX файл успешно сохранен!")

@@ -1,7 +1,20 @@
 # server.py
+from scheduler import get_scheduler
+from core.report_utils import create_combined_report
+from scanners.nmap_scanner import NmapScanner, simple_scan as nmap_scan
+from scanners.dns_scanner import simple_scan as dns_scan
+from scanners.ssl_tls_scanner import SSLTLSScanner
+from scanners.cors_scanner import CORSScanner
+from scanners.retire_scanner import simple_scan as retire_scan
+from scanners.web_url_scanner import simple_scan as web_scan
+from scanners.osint_scanner import simple_scan as osint_scan
+from scanners.wappalyzer_scanner import simple_scan as wappalyzer_scan, WappalyzerScanner
+from scanners.vulnerability_scanner import VulnerabilityScanner
 from fastapi import FastAPI, HTTPException, Query, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 from urllib.parse import urlparse
 import asyncio
 import ipaddress
@@ -17,31 +30,49 @@ import datetime
 import threading
 import logging
 
+# Auth imports
+from auth.database import SessionLocal, engine
+from auth import models, schemas, auth
+from jose import JWTError, jwt
+
 logger = logging.getLogger(__name__)
 
-from scanners.vulnerability_scanner import VulnerabilityScanner
-from scanners.wappalyzer_scanner import simple_scan as wappalyzer_scan, WappalyzerScanner
-from scanners.osint_scanner import simple_scan as osint_scan
-from scanners.web_url_scanner import simple_scan as web_scan
-from scanners.retire_scanner import simple_scan as retire_scan
-from scanners.cors_scanner import CORSScanner
-from scanners.ssl_tls_scanner import SSLTLSScanner
-from scanners.dns_scanner import simple_scan as dns_scan
-from scanners.nmap_scanner import NmapScanner, simple_scan as nmap_scan
-from core.report_utils import create_combined_report
-# from auth.sqlalchemy.orm import Session
-# from auth.database import engine, get_db
-# from models import Base
-# from auth.schemas import UserCreate, UserLogin, UserResponse, Token
-# from auth.auth import authenticate_user, create_access_token, get_password_hash, get_current_user
-# import models
+# Initialize database
+models.Base.metadata.create_all(bind=engine)
+
+# Create tables if they don't exist
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Function to verify JWT token
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> str:
+    """Verify JWT token and return username"""
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # Глобальный словарь для отслеживания статуса сканирований
 _scan_sessions = {}
 _scan_sessions_lock = threading.Lock()
 
-
-# Base.metadata.create_all(bind=engine)
 
 
 def create_scan_session(scan_id: str) -> dict:
@@ -134,6 +165,58 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.post("/auth/register", response_model=schemas.UserResponse)
+def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Регистрация нового пользователя"""
+    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    if db_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered"
+        )
+    
+    hashed_password = auth.get_password_hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        hashed_password=hashed_password,
+        # email удален - его нет в модели
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    return db_user
+
+
+@app.post("/auth/login", response_model=schemas.Token)
+def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
+    """Вход пользователя и получение JWT токена"""
+    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    
+    if not db_user or not auth.verify_password(user.password, db_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = auth.create_access_token(data={"sub": db_user.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/auth/me", response_model=schemas.UserResponse)
+def get_current_user(username: str = Depends(verify_token), db: Session = Depends(get_db)):
+    """Получить информацию о текущем пользователе"""
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+    return user
+
+# ========================================================
 
 URL_RE = re.compile(r"^https?://", re.I)
 
@@ -425,11 +508,11 @@ def save_ssl_tls_report(scanner: SSLTLSScanner) -> dict:
     """Сохранить отчет SSL/TLS в JSON и TXT в backend/reports/ssl-tls"""
     # Используем методы сканера для сохранения отчетов
     scanner.save_reports()
-    
+
     # Получаем пути файлов
     json_path = scanner.json_dir / f"{scanner.filename_base}.json"
     txt_path = scanner.txt_dir / f"{scanner.filename_base}.txt"
-    
+
     print(f"✓ SSL/TLS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
     return {
         'json': str(json_path),
@@ -438,7 +521,12 @@ def save_ssl_tls_report(scanner: SSLTLSScanner) -> dict:
 
 
 @app.get("/api/tool")
-async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: bool = Query(False, description="Allow scanning private/loopback addresses (use with caution)")):
+async def api_tool(
+    tool: str = Query(...),
+    q: str = Query(...),
+    allow_internal: bool = Query(False, description="Allow scanning private/loopback addresses (use with caution)"),
+    username: str = Depends(verify_token)  # Require authentication
+):
     """Run a non-streaming tool and return JSON result. Supported tools:
     - whois: runs system `whois` (if installed)
     - nuclei: runs system `nuclei` (if installed)
@@ -448,7 +536,6 @@ async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: 
     # basic validation
     if not q:
         raise HTTPException(status_code=400, detail="Empty query")
-
 
     if tool == "whois":
         domain = extract_domain(q)
@@ -461,15 +548,15 @@ async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: 
             except Exception as e:
                 output = ""
                 error = f"Whois error: {str(e)}"
-            
+
             # Сохраняем отчет
             reports_base = Path(__file__).parent / "reports"
             save_whois_report(domain, output, error)
-            
+
             return {"tool": "whois", "output": output, "error": error}
         except ImportError:
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail="Whois library не установлена. Установите: pip install python-whois")
 
     if tool == "nuclei":
@@ -506,10 +593,8 @@ async def api_tool(tool: str = Query(...), q: str = Query(...), allow_internal: 
             raise HTTPException(
                 status_code=500, detail=f"Ошибка при сканировании Nuclei: {str(e)}")
 
-
     raise HTTPException(
         status_code=400, detail=f"Инструмент '{tool}' не найден")
-
 
 
 @app.get("/api/scanner")
@@ -519,7 +604,8 @@ async def api_scanner(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "scanner", description="Выбранные инструменты (comma-separated)")
+        "scanner", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск сканера уязвимостей с сохранением отчетов"""
     try:
@@ -622,7 +708,8 @@ async def api_nuclei(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "nuclei", description="Выбранные инструменты (comma-separated)")
+        "nuclei", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск Nuclei для сканирования на уязвимости"""
     try:
@@ -745,7 +832,8 @@ async def api_web(
 
 @app.get("/api/retire")
 async def api_retire(
-    target: str = Query(..., description="URL для сканирования JavaScript библиотек"),
+    target: str = Query(...,
+                        description="URL для сканирования JavaScript библиотек"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
@@ -933,7 +1021,7 @@ async def api_cors(
             target = f"http://{target}"
 
         reports_base = Path(__file__).parent / "reports"
-        
+
         # Создаем и запускаем сканер
         scanner = CORSScanner(target, None, str(reports_base))
         await asyncio.to_thread(scanner.run_all_checks)
@@ -968,7 +1056,8 @@ async def api_cors(
 
 @app.get("/api/ssl-tls")
 async def api_ssl_tls(
-    target: str = Query(..., description="URL или хост для SSL/TLS сканирования"),
+    target: str = Query(...,
+                        description="URL или хост для SSL/TLS сканирования"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
@@ -1028,7 +1117,8 @@ async def api_ssl_tls(
 
 @app.get("/api/dns")
 async def api_dns(
-    target: str = Query(..., description="Домен или IP адрес для DNS сканирования"),
+    target: str = Query(...,
+                        description="Домен или IP адрес для DNS сканирования"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
@@ -1073,10 +1163,11 @@ async def cancel_scan(scan_id: str = Query(..., description="ID сканиров
     """Отменить активное сканирование по ID"""
     try:
         if not scan_id:
-            raise HTTPException(status_code=400, detail="Не указан ID сканирования")
-        
+            raise HTTPException(
+                status_code=400, detail="Не указан ID сканирования")
+
         cancelled = cancel_scan_session(scan_id)
-        
+
         if cancelled:
             return {
                 "status": "success",
@@ -1089,7 +1180,7 @@ async def cancel_scan(scan_id: str = Query(..., description="ID сканиров
                 "message": f"Сканирование {scan_id} не найдено или уже завершено",
                 "scan_id": scan_id
             }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1102,13 +1193,13 @@ async def get_scan_status(scan_id: str = Query(..., description="ID сканир
     """Получить статус сканирования"""
     try:
         session = get_scan_session(scan_id)
-        
+
         if not session:
             return {
                 "status": "not_found",
                 "message": "Сканирование не найдено"
             }
-        
+
         return {
             "status": "success",
             "scan_id": scan_id,
@@ -1119,7 +1210,7 @@ async def get_scan_status(scan_id: str = Query(..., description="ID сканир
             "start_time": session['start_time'].isoformat(),
             "duration": (datetime.datetime.now() - session['start_time']).total_seconds()
         }
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при получении статуса: {str(e)}")
@@ -1127,12 +1218,15 @@ async def get_scan_status(scan_id: str = Query(..., description="ID сканир
 
 @app.get("/api/nmap")
 async def api_nmap(
-    target: str = Query(..., description="Хост, IP адрес или IP диапазон для сканирования"),
+    target: str = Query(...,
+                        description="Хост, IP адрес или IP диапазон для сканирования"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
-    arguments: str = Query("-sV -sC --top-ports 1000", description="Аргументы для Nmap"),
+    arguments: str = Query("-sV -sC --top-ports 1000",
+                           description="Аргументы для Nmap"),
     selected_tools: str = Query(
-        "nmap", description="Выбранные инструменты (comma-separated)")
+        "nmap", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """Запуск Nmap для сканирования портов и определения сервисов"""
     try:
@@ -1197,7 +1291,8 @@ async def run_selected_tools(
                        description="Список инструментов (comma-separated)"),
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
-    scan_id: str = Query(None, description="ID сканирования для отслеживания")
+    scan_id: str = Query(None, description="ID сканирования для отслеживания"),
+    username: str = Depends(verify_token)  # Require authentication
 ):
     """
     Запустить выбранные инструменты сканирования и создать единый отчет
@@ -1218,7 +1313,7 @@ async def run_selected_tools(
     else:
         scan_id = f"scan_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
         create_scan_session(scan_id)
-    
+
     try:
         # Проверяем отмену перед началом
         if not is_scan_active(scan_id):
@@ -1227,7 +1322,7 @@ async def run_selected_tools(
                 'message': 'Сканирование было отменено до начала',
                 'scan_id': scan_id
             }
-        
+
         # Валидируем target
         validate_target(target, allow_internal=allow_internal)
 
@@ -1253,20 +1348,21 @@ async def run_selected_tools(
             try:
                 # Проверяем отмену перед каждым инструментом
                 if not is_scan_active(scan_id):
-                    print(f"[*] Сканирование {scan_id} отменено, пропускаем {tool}")
+                    print(
+                        f"[*] Сканирование {scan_id} отменено, пропускаем {tool}")
                     results[tool] = {
                         'status': 'cancelled',
                         'error': 'Сканирование было отменено'
                     }
                     continue
-                
+
                 # Обновляем текущий инструмент
                 with _scan_sessions_lock:
                     if scan_id in _scan_sessions:
                         _scan_sessions[scan_id]['current_tool'] = tool
-                
+
                 print(f"[*] Запускаем {tool}...")
-                
+
                 if tool == 'wappalyzer':
                     result = await asyncio.to_thread(wappalyzer_scan, target, str(reports_base))
                     results[tool] = {
@@ -1350,7 +1446,7 @@ async def run_selected_tools(
                     except Exception as e:
                         output = ""
                         error = str(e)
-                    
+
                     reports = await asyncio.to_thread(save_whois_report, domain, output, error)
                     results[tool] = {
                         'status': 'success',
@@ -1415,7 +1511,8 @@ async def run_selected_tools(
                     }
 
                 elif tool == 'ssl-tls':
-                    scanner = SSLTLSScanner(target, reports_dir=str(reports_base))
+                    scanner = SSLTLSScanner(
+                        target, reports_dir=str(reports_base))
                     await asyncio.to_thread(scanner.run_scan)
                     reports = save_ssl_tls_report(scanner)
                     results[tool] = {
@@ -1431,9 +1528,10 @@ async def run_selected_tools(
                     }
 
                 elif tool == 'nmap':
-                    scanner = NmapScanner(target, reports_dir=str(reports_base))
+                    scanner = NmapScanner(
+                        target, reports_dir=str(reports_base))
                     success = await asyncio.to_thread(scanner.run_scan, "-sV -sC --top-ports 1000")
-                    
+
                     if success:
                         await asyncio.to_thread(scanner.parse_results)
                         reports = await asyncio.to_thread(scanner.save_reports)
@@ -1536,7 +1634,8 @@ async def download_word_report(filename: str = Query(..., description="Имя ф
             raise HTTPException(
                 status_code=400, detail="Недопустимое имя файла")
 
-        file_path = Path(__file__).parent / "reports" / "combined" / "word" / filename
+        file_path = Path(__file__).parent / "reports" / \
+            "combined" / "word" / filename
 
         if not file_path.exists() or not file_path.suffix.lower() == ".docx":
             raise HTTPException(status_code=404, detail="Файл не найден")
@@ -1591,7 +1690,8 @@ async def delete_word_report(filename: str = Query(None, description="Имя ф�
         word_dir = Path(__file__).parent / "reports" / "combined" / "word"
 
         if not word_dir.exists():
-            raise HTTPException(status_code=404, detail="Папка отчетов не найдена")
+            raise HTTPException(
+                status_code=404, detail="Папка отчетов не найдена")
 
         if filename:
             # Защита от path traversal
@@ -1889,6 +1989,7 @@ async def clear_all_reports():
             reports_base / "json",
             reports_base / "combined" / "json",
             reports_base / "combined" / "txt",
+            reports_base / "combined" / "word",
             reports_base / "nuclei" / "json",
             reports_base / "nuclei" / "txt",
             reports_base / "wappalyzer" / "json",
@@ -1901,6 +2002,7 @@ async def clear_all_reports():
             reports_base / "osint" / "txt",
             reports_base / "scanner" / "json",
             reports_base / "scanner" / "txt",
+            reports_base / "word",
         ]
 
         for dir_path in dirs_to_clear:
@@ -1927,7 +2029,6 @@ async def clear_all_reports():
 
 # ============= SCHEDULER ENDPOINTS =============
 
-from scheduler import get_scheduler
 
 # Получиваем глобальный экземпляр планировщика
 scheduler = get_scheduler(Path(__file__).parent)
@@ -1937,7 +2038,7 @@ scheduler = get_scheduler(Path(__file__).parent)
 async def startup_events():
     """Инициализация при запуске приложения"""
     logger.info("🚀 Запуск приложения...")
-    
+
     # Запускаем планировщик
     scheduler.start()
     logger.info("📅 Планировщик запущен")
@@ -1973,7 +2074,7 @@ async def get_task(task_id: str):
         task = scheduler.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Задача не найдена")
-        
+
         return {
             "status": "success",
             "task": task
@@ -1994,30 +2095,30 @@ async def create_task(task: dict):
         for field in required_fields:
             if field not in task:
                 raise HTTPException(
-                    status_code=400, 
+                    status_code=400,
                     detail=f"Отсутствует обязательное поле: {field}")
-        
+
         # Валидация query
         query = task.get('query', '').strip()
         if not query:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Цель сканирования не может быть пустой")
-        
+
         # Валидация инструментов
         if not task.get('activeTools') or not isinstance(task['activeTools'], list):
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Должен быть выбран хотя бы один инструмент")
-        
+
         # Регистрируем callbacks для инструментов если они еще не зарегистрированы
         await _register_scan_callbacks()
-        
+
         # Добавляем задачу в планировщик
         task_id = scheduler.add_task(task)
-        
+
         logger.info(f"✓ Задача создана: {task_id}")
-        
+
         return {
             "status": "success",
             "task_id": task_id,
@@ -2028,7 +2129,7 @@ async def create_task(task: dict):
     except Exception as e:
         logger.error(f"✗ Ошибка при создании задачи: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Ошибка при создании задачи: {str(e)}")
 
 
@@ -2039,12 +2140,12 @@ async def update_task(task_id: str, task_data: dict):
         existing_task = scheduler.get_task(task_id)
         if not existing_task:
             raise HTTPException(status_code=404, detail="Задача не найдена")
-        
+
         # Обновляем задачу
         scheduler.update_task(task_id, task_data)
-        
+
         logger.info(f"✓ Задача обновлена: {task_id}")
-        
+
         return {
             "status": "success",
             "message": "Задача успешно обновлена"
@@ -2053,7 +2154,7 @@ async def update_task(task_id: str, task_data: dict):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Ошибка при обновлении задачи: {str(e)}")
 
 
@@ -2064,9 +2165,9 @@ async def delete_task(task_id: str):
         removed = scheduler.remove_task(task_id)
         if not removed:
             raise HTTPException(status_code=404, detail="Задача не найдена")
-        
+
         logger.info(f"✓ Задача удалена: {task_id}")
-        
+
         return {
             "status": "success",
             "message": "Задача успешно удалена"
@@ -2075,7 +2176,7 @@ async def delete_task(task_id: str):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Ошибка при удалении задачи: {str(e)}")
 
 
@@ -2086,7 +2187,7 @@ async def get_task_results(task_id: str):
         task = scheduler.get_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Задача не найдена")
-        
+
         # Возвращаем информацию о последнем сканировании
         return {
             "status": "success",
@@ -2104,13 +2205,13 @@ async def get_task_results(task_id: str):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Ошибка при получении результатов: {str(e)}")
 
 
 async def _register_scan_callbacks():
     """Зарегистрировать callbacks для всех инструментов"""
-    
+
     # === SCANNER ===
     async def callback_scanner(target, allow_internal=False, task_id=None):
         """Callback для VulnerabilityScanner"""
@@ -2118,7 +2219,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск scanner для {target}")
             from scanners.vulnerability_scanner import VulnerabilityScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = VulnerabilityScanner(target, reports_dir)
             scanner.scan()
             # Сохраняем оба формата отчётов
@@ -2127,7 +2229,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ scanner завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске scanner: {e}", exc_info=True)
-    
+
     # === NUCLEI ===
     async def callback_nuclei(target, allow_internal=False, task_id=None):
         """Callback для Nuclei сканера"""
@@ -2135,12 +2237,13 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск nuclei для {target}")
             from scanners.nuclei_scanner import run_scan
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             result = await run_scan(target, save_reports=True, reports_dir=reports_dir)
             logger.info(f"✓ nuclei завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске nuclei: {e}", exc_info=True)
-    
+
     # === OSINT ===
     async def callback_osint(target, allow_internal=False, task_id=None):
         """Callback для OSINT сканера"""
@@ -2148,12 +2251,13 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск osint для {target}")
             from scanners.osint_scanner import simple_scan
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             result = simple_scan(target, reports_dir)
             logger.info(f"✓ osint завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске osint: {e}", exc_info=True)
-    
+
     # === WAPPALYZER ===
     async def callback_wappalyzer(target, allow_internal=False, task_id=None):
         """Callback для Wappalyzer"""
@@ -2161,7 +2265,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск wappalyzer для {target}")
             from scanners.wappalyzer_scanner import WappalyzerScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = WappalyzerScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2170,8 +2275,9 @@ async def _register_scan_callbacks():
             json_report = scanner.save_json_report()
             logger.info(f"✓ wappalyzer завершен для {target}")
         except Exception as e:
-            logger.error(f"✗ Ошибка при запуске wappalyzer: {e}", exc_info=True)
-    
+            logger.error(
+                f"✗ Ошибка при запуске wappalyzer: {e}", exc_info=True)
+
     # === SSL-TLS ===
     async def callback_ssl_tls(target, allow_internal=False, task_id=None):
         """Callback для SSL/TLS сканера"""
@@ -2179,7 +2285,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск ssl-tls для {target}")
             from scanners.ssl_tls_scanner import SSLTLSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = SSLTLSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2189,7 +2296,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ ssl-tls завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске ssl-tls: {e}", exc_info=True)
-    
+
     # === NMAP ===
     async def callback_nmap(target, allow_internal=False, task_id=None):
         """Callback для Nmap сканера"""
@@ -2197,8 +2304,10 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск nmap для {target}")
             from scanners.nmap_scanner import NmapScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
-            scanner = NmapScanner(target, reports_dir, allow_internal=allow_internal)
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
+            scanner = NmapScanner(target, reports_dir,
+                                  allow_internal=allow_internal)
             scanner.scan()
             scanner.display_results()
             # Сохраняем оба формата отчётов
@@ -2207,7 +2316,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ nmap завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске nmap: {e}", exc_info=True)
-    
+
     # === CORS ===
     async def callback_cors(target, allow_internal=False, task_id=None):
         """Callback для CORS сканера"""
@@ -2215,7 +2324,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск cors для {target}")
             from scanners.cors_scanner import CORSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = CORSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2225,7 +2335,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ cors завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске cors: {e}", exc_info=True)
-    
+
     # === DNS ===
     async def callback_dns(target, allow_internal=False, task_id=None):
         """Callback для DNS сканера"""
@@ -2233,7 +2343,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск dns для {target}")
             from scanners.dns_scanner import DNSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = DNSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2243,7 +2354,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ dns завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске dns: {e}", exc_info=True)
-    
+
     # === RETIRE ===
     async def callback_retire(target, allow_internal=False, task_id=None):
         """Callback для Retire.js"""
@@ -2251,7 +2362,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск retire для {target}")
             from scanners.retire_scanner import RetireScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = RetireScanner(target, reports_dir)
             results = scanner.scan()
             scanner.display_results()
@@ -2262,7 +2374,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ retire завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске retire: {e}", exc_info=True)
-    
+
     # === WHOIS ===
     async def callback_whois(target, allow_internal=False, task_id=None):
         """Callback для WHOIS сканера"""
@@ -2273,7 +2385,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ whois завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске whois: {e}", exc_info=True)
-    
+
     # === WEB ===
     async def callback_web(target, allow_internal=False, task_id=None):
         """Callback для Web сканера"""
@@ -2281,7 +2393,8 @@ async def _register_scan_callbacks():
             logger.info(f"🔄 Запуск web для {target}")
             from scanners.web_url_scanner import WebScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent / "reports" / (task_id or "scheduled"))
+            reports_dir = str(Path(__file__).parent /
+                              "reports" / (task_id or "scheduled"))
             scanner = WebScanner(target, reports_dir)
             results = scanner.scan()
             scanner.display_results()
@@ -2292,7 +2405,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ web завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске web: {e}", exc_info=True)
-    
+
     # Регистрируем все callbacks
     callbacks_map = {
         'scanner': callback_scanner,
@@ -2307,7 +2420,7 @@ async def _register_scan_callbacks():
         'whois': callback_whois,
         'web': callback_web,
     }
-    
+
     for tool_name, callback in callbacks_map.items():
         if tool_name not in scheduler.scan_callbacks:
             scheduler.register_callback(tool_name, callback)
@@ -2318,14 +2431,12 @@ async def _register_scan_callbacks():
 async def get_report_content(filename: str = Query(..., description="Имя файла отчета"), report_type: str = Query("json", description="Тип отчета: json, txt_report, или combined")):
     """
     Получить содержимое отчета для просмотра в браузере
-    
     Args:
         filename: Имя файла отчета
         report_type: Тип отчета:
             - 'json': JSON отчеты из combined/json
             - 'txt_report': TXT отчеты из combined/txt
             - 'combined': Все типы из combined
-    
     Returns:
         Текстовое содержимое файла
     """
@@ -2340,13 +2451,15 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
         if report_type == "json":
             file_path = reports_base / "json" / filename
             if not file_path.exists() or not file_path.suffix.lower() == ".json":
-                raise HTTPException(status_code=404, detail="JSON файл не найден")
-        
+                raise HTTPException(
+                    status_code=404, detail="JSON файл не найден")
+
         elif report_type == "txt_report":
             file_path = reports_base / "txt" / filename
             if not file_path.exists() or not file_path.suffix.lower() == ".txt":
-                raise HTTPException(status_code=404, detail="TXT файл не найден")
-        
+                raise HTTPException(
+                    status_code=404, detail="TXT файл не найден")
+
         else:
             raise HTTPException(
                 status_code=400, detail="Неизвестный тип отчета")
@@ -2365,7 +2478,6 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                 return PlainTextResponse(content, media_type="text/plain")
-        
         except UnicodeDecodeError:
             raise HTTPException(
                 status_code=500, detail="Ошибка при чтении файла (кодировка)")
