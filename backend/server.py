@@ -29,7 +29,7 @@ import json
 import datetime
 import threading
 import logging
-
+import whois
 # Auth imports
 from auth.database import SessionLocal, engine
 from auth import models, schemas, auth
@@ -321,24 +321,12 @@ async def run_command(cmd: list):
 
 # Функции сохранения отчетов
 def save_scanner_report(scanner: VulnerabilityScanner) -> str:
-    """Сохранить отчет сканера в JSON в backend/reports"""
-    reports_base = Path(__file__).parent / "reports"
+    """Сохранить отчет сканера в JSON и TXT в backend/reports/scanner"""
+    # Используем методы сканера для правильного сохранения в reports/scanner/
+    json_path = scanner.save_json_report()
+    txt_path = scanner.save_txt_report()
 
-    # Создаем директории если нет
-    json_dir = reports_base / "json"
-    json_dir.mkdir(parents=True, exist_ok=True)
-
-    # Используем filename_base из объекта scanner
-    filename_base = scanner.filename_base
-
-    # Сохраняем JSON отчет
-    json_path = json_dir / f"{filename_base}.json"
-    report_data = scanner.get_json_report()
-
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(report_data, f, indent=2, ensure_ascii=False)
-
-    print(f"✓ JSON отчет сохранен: {json_path}")
+    print(f"✓ Scanner отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
     return str(json_path)
 
 
@@ -539,25 +527,40 @@ async def api_tool(
 
     if tool == "whois":
         domain = extract_domain(q)
+        output = ""
+        error = ""
+        
         try:
             import whois
-            try:
-                whois_result = await asyncio.to_thread(whois.whois, domain)
-                output = str(whois_result)
-                error = ""
-            except Exception as e:
-                output = ""
-                error = f"Whois error: {str(e)}"
-
-            # Сохраняем отчет
-            reports_base = Path(__file__).parent / "reports"
-            save_whois_report(domain, output, error)
-
-            return {"tool": "whois", "output": output, "error": error}
         except ImportError:
             raise HTTPException(
                 status_code=500,
                 detail="Whois library не установлена. Установите: pip install python-whois")
+        
+        try:
+            logger.info(f"Выполняем WHOIS запрос для домена: {domain}")
+            whois_result = await asyncio.to_thread(whois.whois, domain)
+            
+            # Проверяем результат
+            if whois_result:
+                output = str(whois_result)
+                logger.info(f"WHOIS результат получен: {len(output)} символов")
+            else:
+                error = "Whois returned empty result"
+                logger.warning(f"WHOIS вернул пустой результат для {domain}")
+                
+        except whois.parser.PywhoisError as e:
+            error = f"Whois parser error: {str(e)}"
+            logger.error(f"Ошибка парсера WHOIS: {error}")
+        except Exception as e:
+            error = f"Whois error: {str(e)}"
+            logger.error(f"Ошибка WHOIS: {error}")
+
+        # Сохраняем отчет
+        reports_base = Path(__file__).parent / "reports"
+        save_whois_report(domain, output, error)
+
+        return {"tool": "whois", "output": output, "error": error}
 
     if tool == "nuclei":
         # validate target
@@ -618,12 +621,17 @@ async def api_scanner(
         # Создаем сканер
         scanner = VulnerabilityScanner(target, output_name, str(reports_base))
 
-        # Запускаем все проверки
+        # Запускаем все проверки (без сохранения, они будут сохранены ниже)
         scanner.run_all_checks()
 
-        # Сохраняем отчеты
-        scanner.save_json_report()
-        scanner.save_docx_report()
+        # Сохраняем отчеты явно
+        print(f"[DEBUG] Сохраняем JSON отчет...")
+        json_report_path = scanner.save_json_report()
+        print(f"[DEBUG] JSON путь: {json_report_path}")
+        
+        print(f"[DEBUG] Сохраняем TXT отчет...")
+        txt_report_path = scanner.save_txt_report()
+        print(f"[DEBUG] TXT путь: {txt_report_path}")
 
         # Получаем JSON отчет
         report = scanner.get_json_report()
@@ -643,8 +651,8 @@ async def api_scanner(
             "scan_id": scanner.scan_id,
             "hostname": scanner.hostname,
             "individual_reports": {
-                "json": str(scanner.json_dir / f"{scanner.filename_base}.json"),
-                "docx": str(scanner.word_dir / f"{scanner.filename_base}.docx")
+                "json": json_report_path,
+                "txt": txt_report_path
             },
             "combined_reports": combined_reports
         }
@@ -1438,18 +1446,34 @@ async def run_selected_tools(
 
                 elif tool == 'whois':
                     domain = extract_domain(target)
+                    output = ""
+                    error = ""
+                    
                     try:
                         import whois
+                        logger.info(f"Выполняем WHOIS запрос для домена: {domain}")
                         whois_result = await asyncio.to_thread(whois.whois, domain)
-                        output = str(whois_result)
-                        error = ""
+                        
+                        if whois_result:
+                            output = str(whois_result)
+                            logger.info(f"WHOIS успешно: {len(output)} символов")
+                        else:
+                            error = "Whois returned empty result"
+                            logger.warning(f"WHOIS пуст для {domain}")
+                            
+                    except ImportError:
+                        error = "python-whois library not installed"
+                        logger.error(error)
+                    except whois.parser.PywhoisError as e:
+                        error = f"Whois parser error: {str(e)}"
+                        logger.error(error)
                     except Exception as e:
-                        output = ""
-                        error = str(e)
+                        error = f"Whois error: {str(e)}"
+                        logger.error(error)
 
                     reports = await asyncio.to_thread(save_whois_report, domain, output, error)
                     results[tool] = {
-                        'status': 'success',
+                        'status': 'success' if output else 'warning',
                         'output': output,
                         'error': error,
                         'reports': reports
@@ -2493,6 +2517,142 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при получении содержимого отчета: {str(e)}")
+
+
+@app.get("/api/available-reports")
+async def get_available_reports():
+    """
+    Получить список доступных JSON отчетов для выбора
+    """
+    try:
+        reports_base = Path(__file__).parent / "reports"
+        
+        # Структура для хранения отчетов
+        available_reports = {
+            'scanner': [],
+            'nuclei': [],
+            'nmap': [],
+            'web': [],
+            'combined': []
+        }
+        
+        # Поиск отчетов по инструментам
+        tools = ['scanner', 'nuclei', 'nmap', 'web']
+        
+        for tool in tools:
+            json_dir = reports_base / tool / "json"
+            if json_dir.exists():
+                for json_file in json_dir.glob("*.json"):
+                    try:
+                        with open(json_file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        
+                        # Извлекаем информацию для отображения
+                        report_info = {
+                            'filename': json_file.name,
+                            'path': str(json_file.relative_to(reports_base)),
+                            'tool': tool,
+                            'scan_datetime': data.get('scan_datetime', ''),
+                            'target': data.get('scan_info', {}).get('target_url', 
+                                    data.get('target', 'Unknown')),
+                            'total_vulnerabilities': 0,
+                            'summary': {}
+                        }
+                        
+                        # Извлекаем статистику в зависимости от типа инструмента
+                        if tool == 'scanner':
+                            summary = data.get('summary', {})
+                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['summary'] = summary
+                            
+                        elif tool == 'nuclei':
+                            total = data.get('total_findings', len(data.get('results', [])))
+                            report_info['total_vulnerabilities'] = total
+                            report_info['summary'] = data.get('by_severity', {})
+                            
+                        elif tool == 'nmap':
+                            summary = data.get('summary', {})
+                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['summary'] = summary
+                            
+                        elif tool == 'web':
+                            report_info['total_vulnerabilities'] = len(data.get('vulnerabilities', []))
+                            report_info['summary'] = data.get('summary', {})
+                        
+                        available_reports[tool].append(report_info)
+                        
+                    except Exception as e:
+                        print(f"Ошибка чтения {json_file}: {e}")
+                        continue
+        
+        # Поиск комбинированных отчетов
+        combined_dir = reports_base / "combined" / "json"
+        if combined_dir.exists():
+            for json_file in combined_dir.glob("*.json"):
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    report_info = {
+                        'filename': json_file.name,
+                        'path': str(json_file.relative_to(reports_base)),
+                        'tool': 'combined',
+                        'scan_datetime': data.get('scan_datetime', ''),
+                        'targets': data.get('targets', []),
+                        'total_vulnerabilities': data.get('summary', {}).get('total_vulnerabilities', 0),
+                        'summary': data.get('summary', {})
+                    }
+                    available_reports['combined'].append(report_info)
+                except Exception as e:
+                    print(f"Ошибка чтения {json_file}: {e}")
+                    continue
+        
+        # Сортируем по дате (новые сверху)
+        for tool in available_reports:
+            available_reports[tool].sort(key=lambda x: x.get('scan_datetime', ''), reverse=True)
+        
+        return {
+            'status': 'success',
+            'reports': available_reports
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка получения списка отчетов: {str(e)}")
+
+
+@app.get("/api/report-content")
+async def get_report_content(
+    report_path: str = Query(..., description="Путь к файлу отчета относительно reports"),
+    username: str = Depends(verify_token)
+):
+    """
+    Получить содержимое JSON отчета для аналитики
+    """
+    try:
+        # Защита от path traversal
+        if ".." in report_path or report_path.startswith('/'):
+            raise HTTPException(status_code=400, detail="Недопустимый путь")
+        
+        reports_base = Path(__file__).parent / "reports"
+        full_path = reports_base / report_path
+        
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail="Файл не найден")
+        
+        with open(full_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        return {
+            'status': 'success',
+            'data': data,
+            'filename': full_path.name,
+            'tool': report_path.split('/')[0] if '/' in report_path else 'unknown'
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка чтения отчета: {str(e)}")
 
 
 if __name__ == "__main__":

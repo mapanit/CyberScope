@@ -4,16 +4,20 @@ const Tools = ({ setActiveTools, activeTools }) => {
   const [tooltipOpen, setTooltipOpen] = useState(null);
 
   const tools = [
-    { id: "scanner", label: "Scanner", info: "Проверяет SQL инъекции, XSS, security headers, чувствительные файлы и другие уязвимости"},
     { id: "osint", label: "OSINT", info: "Сбор информации о домене, IP и других объектах через открытые источники" },
-    { id: "wappalyzer", label: "Wappalyzer", info: "Определение технологий, фреймворков и CMS на сайте" },
-    { id: "nuclei", label: "Nuclei", info: "Быстрое сканирование на основе YAML шаблонов для выявления CVE" },
     { id: "whois", label: "WhoIS", info: "Получение информации о регистрации и владельце домена" },
-    { id: "web", label: "Web", info: "Сканирование инструментов для веб-разведки" },
+    { id: "dns", label: "DNS", info: "Сканирование DNS записей" },
+    
+    { id: "nmap", label: "Nmap", info: "Сканирование портов и сервисов на целевом хосте" },
+    
+    { id: "wappalyzer", label: "Wappalyzer", info: "Определение технологий, фреймворков и CMS на сайте" },
+    
+    { id: "scanner", label: "Scanner", info: "Проверяет SQL инъекции, XSS, security headers, чувствительные файлы и другие уязвимости"},
     { id: "retire", label: "Retire", info: "Сканирование JavaScript библиотек на наличие уязвимостей" },
     { id: "cors", label: "CORS", info: "Проверка конфигурации CORS на наличие уязвимостей" },
-    { id: "dns", label: "DNS", info: "Сканирование DNS записей" },
-    { id: "nmap", label: "Nmap", info: "Сканирование портов и сервисов на целевом хосте" },
+    { id: "web", label: "Web", info: "Сканирование инструментов для веб-разведки" },
+    
+    { id: "nuclei", label: "Nuclei", info: "Быстрое сканирование на основе YAML шаблонов для выявления CVE" },
   ];
 
   const handleToolClick = (toolId) => {
