@@ -43,6 +43,12 @@ try:
 except ImportError:
     HAS_DOCX = False
 
+# Импорт конфигурации сканеров
+try:
+    from scanner_config import get_nmap_profile
+except ImportError:
+    get_nmap_profile = None
+
 init(autoreset=True)
 
 MAX_CVE_PER_SERVICE = 10
@@ -1047,11 +1053,28 @@ class NmapScanner(ReportBase):
         return reports
 
 
-def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> Dict:
-    """Простая функция для server.py - поддержка URL и IP"""
+def simple_scan(target: str, profile: str = "standard", reports_dir: str = None, nmap_profile: str = "standard") -> Dict:
+    """Простая функция для server.py - поддержка URL и IP с профилями конфигурации
+    
+    Args:
+        target: IP, домен или URL для сканирования
+        profile: Профиль сканирования (deprecated)
+        reports_dir: Директория для отчетов
+        nmap_profile: Профиль из конфигурации (quick, standard, deep, aggressive)
+    """
     scanner = NmapScanner(target=target, reports_dir=reports_dir)
     
-    if scanner.run_scan(scan_profile=profile):
+    # Получаем аргументы из конфигурации профиля
+    arguments = None
+    if get_nmap_profile:
+        try:
+            cfg = get_nmap_profile(nmap_profile)
+            arguments = cfg.get_full_arguments()
+            print(f"[+] Используется профиль Nmap: {cfg.name}")
+        except Exception as e:
+            print(f"[!] Ошибка при загрузке профиля {nmap_profile}: {e}. Используем стандартные параметры.")
+    
+    if scanner.run_scan(scan_profile=profile, arguments=arguments):
         scanner.parse_results(search_cves=True)
         
         if scanner.is_url:
@@ -1060,6 +1083,7 @@ def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> 
                 'status': 'success',
                 'target': target,
                 'scan_id': scanner.scan_id,
+                'nmap_profile': nmap_profile,
                 'summary': scanner.get_summary(),
                 'web_info': scanner.web_info,
                 'vulnerabilities': scanner.web_vulnerabilities,
@@ -1071,6 +1095,7 @@ def simple_scan(target: str, profile: str = "vuln", reports_dir: str = None) -> 
                 'status': 'success',
                 'target': target,
                 'scan_id': scanner.scan_id,
+                'nmap_profile': nmap_profile,
                 'summary': scanner.get_summary(),
                 'vulnerabilities': scanner.vulnerabilities,
                 'open_ports': scanner.open_ports,

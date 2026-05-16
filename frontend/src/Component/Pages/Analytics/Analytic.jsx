@@ -23,6 +23,8 @@ const Analytic = ({ language }) => {
     nuclei: [],
     nmap: [],
     web: [],
+    cors: [],
+    osint: [],
     combined: []
   });
   const [selectedTool, setSelectedTool] = useState("scanner");
@@ -217,10 +219,20 @@ const Analytic = ({ language }) => {
         severityMap = scanData.by_severity;
       } else if (scanData.results && Array.isArray(scanData.results)) {
         scanData.results.forEach(result => {
-          const severity = (result.info?.severity || 'info').toLowerCase();
+          const severity = (result.info?.severity || result.severity || 'info').toLowerCase();
           severityMap[severity] = (severityMap[severity] || 0) + 1;
         });
       }
+    }
+    
+    // Для CORS - используем summary
+    if (selectedTool === 'cors' && scanData.summary) {
+      severityMap = {
+        critical: scanData.summary.critical || 0,
+        high: scanData.summary.high || 0,
+        medium: scanData.summary.medium || 0,
+        low: scanData.summary.low || 0
+      };
     }
     
     // Для Scanner
@@ -243,6 +255,28 @@ const Analytic = ({ language }) => {
       }
       if (scanData.vulnerabilities_by_severity) {
         severityMap = scanData.vulnerabilities_by_severity;
+      }
+    }
+    
+    // Для CORS - используем summary если есть
+    if (selectedTool === 'cors' && scanData.summary) {
+      severityMap = {
+        critical: scanData.summary.critical || 0,
+        high: scanData.summary.high || 0,
+        medium: scanData.summary.medium || 0,
+        low: scanData.summary.low || 0
+      };
+    }
+    
+    // Для OSINT - обычно нет severity, но можем показать статистику по источникам
+    if (selectedTool === 'osint') {
+      if (scanData.summary?.by_severity) {
+        severityMap = scanData.summary.by_severity;
+      } else if (scanData.results && Array.isArray(scanData.results)) {
+        scanData.results.forEach(result => {
+          const severity = (result.severity || 'info').toLowerCase();
+          severityMap[severity] = (severityMap[severity] || 0) + 1;
+        });
       }
     }
     
@@ -315,6 +349,22 @@ const Analytic = ({ language }) => {
     if (selectedTool === 'nmap' && scanData.vulnerabilities && Array.isArray(scanData.vulnerabilities)) {
       scanData.vulnerabilities.forEach(vuln => {
         const type = vuln.cve_id || vuln.service || "Unknown";
+        typeCount[type] = (typeCount[type] || 0) + 1;
+      });
+    }
+    
+    // Для CORS
+    if (selectedTool === 'cors' && scanData.vulnerabilities && Array.isArray(scanData.vulnerabilities)) {
+      scanData.vulnerabilities.forEach(vuln => {
+        const type = vuln.type || "Unknown";
+        typeCount[type] = (typeCount[type] || 0) + 1;
+      });
+    }
+    
+    // Для OSINT
+    if (selectedTool === 'osint' && scanData.results && Array.isArray(scanData.results)) {
+      scanData.results.forEach(result => {
+        const type = result.source || result.type || "Unknown";
         typeCount[type] = (typeCount[type] || 0) + 1;
       });
     }
@@ -433,6 +483,22 @@ const Analytic = ({ language }) => {
       scanData.hosts.forEach(host => {
         const hostname = typeof host === 'string' ? host : host.host || host.ip || "Unknown";
         endpointCount[hostname] = (endpointCount[hostname] || 0) + 1;
+      });
+    }
+    
+    if (selectedTool === 'cors' && scanData.vulnerabilities && Array.isArray(scanData.vulnerabilities)) {
+      scanData.vulnerabilities.forEach(vuln => {
+        const url = vuln.affected_url || scanData.scan_info?.target_url || "Unknown";
+        let shortName = url.length > 40 ? url.substring(0, 40) + "..." : url;
+        endpointCount[shortName] = (endpointCount[shortName] || 0) + 1;
+      });
+    }
+    
+    if (selectedTool === 'osint' && scanData.results && Array.isArray(scanData.results)) {
+      scanData.results.forEach(result => {
+        const url = result.url || result.subdomain || result.value || "Unknown";
+        let shortName = url.length > 40 ? url.substring(0, 40) + "..." : url;
+        endpointCount[shortName] = (endpointCount[shortName] || 0) + 1;
       });
     }
     

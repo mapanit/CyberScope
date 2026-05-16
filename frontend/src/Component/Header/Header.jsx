@@ -24,7 +24,7 @@ const Header = ({
           <NavLink to="/about-tools" className="a" activeClassName="active">
             {language === "ru" ? "Об инструменте" : "About Tools"}
           </NavLink>
-          <NavLink to="/help" className="a" activeClassName="active">
+          <NavLink to="/Tools" className="a" activeClassName="active">
             {language === "ru" ? "Виды скриптов" : "Script Types"}
           </NavLink>
           <NavLink to="/Analytic" className="a" activeClassName="active">

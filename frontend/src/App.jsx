@@ -16,7 +16,7 @@ import Footer from "./Component/Footer/Footer";
 import AboutTools from "./Component/Pages/AboutTools/AboutTools";
 import Analytic from "./Component/Pages/Analytics/Analytic";
 import Modal from "./Component/Modal/Modal";
-import Help from "./Component/Pages/Help/Help";
+import Tools from "./Component/Pages/Tools/Tools";
 import Login from "./Component/Pages/Auth/Login/Login";
 import Register from "./Component/Pages/Auth/Register/Register";
 import Dashboard from "./Component/Pages/Auth/Dashboard/Dashboard";
@@ -165,11 +165,11 @@ function App() {
             }
           />
           <Route
-            path="/help"
+            path="/Tools"
             element={
               <ProtectedRoute token={token}>
                 <AnimatedPage>
-                  <Help language={language} />
+                  <Tools language={language} />
                 </AnimatedPage>
               </ProtectedRoute>
             }

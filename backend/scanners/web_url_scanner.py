@@ -17,11 +17,18 @@ import time
 from pathlib import Path
 import re
 
+# Импорт конфигурации сканеров
+try:
+    from scanner_config import get_web_scanner_profile
+except ImportError:
+    get_web_scanner_profile = None
+
 
 class WebScanner:
-    def __init__(self, target_url, output_dir="scan_results", reports_dir=None):
+    def __init__(self, target_url, output_dir="scan_results", reports_dir=None, katana_profile="medium"):
         self.target_url = target_url.rstrip('/')
         self.output_dir = output_dir
+        self.katana_profile = katana_profile
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.scan_datetime = datetime.now().isoformat()
         self.scan_start_time = datetime.now()
@@ -60,7 +67,7 @@ class WebScanner:
 
     def run_katana(self):
         """Запуск Katana для сканирования URL"""
-        print(f"\n[+] Запуск Katana для {self.target_url}")
+        print(f"\n[+] Запуск Katana для {self.target_url} (профиль: {self.katana_profile})")
 
         tool_start = datetime.now()
         self.tools_info['katana']['start_time'] = tool_start.isoformat()
@@ -68,20 +75,42 @@ class WebScanner:
         output_file = f"{self.output_dir}/katana_{self.timestamp}.txt"
 
         try:
-            # Базовые параметры Katana (без -fs и -silent которые могут не работать)
-            cmd = [
-                "katana",
-                "-u", self.target_url,
-                "-o", output_file,
-                "-d", "3",  # глубина сканирования
-                "-c", "50"  # количество одновременных запросов
-            ]
+            # Получаем конфигурацию профиля
+            if get_web_scanner_profile:
+                try:
+                    profile = get_web_scanner_profile(self.katana_profile)
+                    cmd = profile.get_katana_arguments(self.target_url) + ["-o", output_file]
+                    depth = str(profile.depth)
+                    concurrency = str(profile.concurrency)
+                except Exception as e:
+                    print(f"[!] Ошибка при загрузке профиля {self.katana_profile}: {e}. Используем стандартные значения.")
+                    cmd = [
+                        "katana",
+                        "-u", self.target_url,
+                        "-o", output_file,
+                        "-d", "3",
+                        "-c", "50"
+                    ]
+                    depth = "3"
+                    concurrency = "50"
+            else:
+                # Fallback если конфиг не загружен
+                cmd = [
+                    "katana",
+                    "-u", self.target_url,
+                    "-o", output_file,
+                    "-d", "3",
+                    "-c", "50"
+                ]
+                depth = "3"
+                concurrency = "50"
 
             # Сохраняем параметры Katana
             self.tools_info['katana']['params'] = {
                 'url': self.target_url,
-                'depth': '3',
-                'concurrency': '50',
+                'depth': depth,
+                'concurrency': concurrency,
+                'profile': self.katana_profile,
                 'mode': 'crawl'
             }
 
@@ -741,14 +770,14 @@ class WebScanner:
         return "\n".join(lines)
 
 
-def simple_scan(target_url, reports_dir=None):
+def simple_scan(target_url, reports_dir=None, katana_profile="medium"):
     """Функция для запуска web сканирования из API"""
     try:
-        print(f"[*] Запуск Web сканирования для {target_url}")
+        print(f"[*] Запуск Web сканирования для {target_url} (профиль Katana: {katana_profile})")
 
-        # Создаем сканер
+        # Создаем сканер с профилем
         scanner = WebScanner(
-            target_url, output_dir="/tmp/web_scan", reports_dir=reports_dir)
+            target_url, output_dir="/tmp/web_scan", reports_dir=reports_dir, katana_profile=katana_profile)
 
         # Запускаем все инструменты
         scanner.run_all(jsfinder_deep=False,
@@ -759,6 +788,7 @@ def simple_scan(target_url, reports_dir=None):
         return {
             'status': 'completed',
             'target_url': target_url,
+            'katana_profile': katana_profile,
             'reports': report_result
         }
 

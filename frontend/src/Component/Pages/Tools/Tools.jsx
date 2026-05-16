@@ -1,9 +1,9 @@
 import React from 'react';
 import { Link } from "react-router-dom";
 
-import './Help.scss';
+import './Tools.scss';
 
-const Help = ({ language = "ru" }) => {
+const Tools = ({ language = "ru" }) => {
   const tools = [
     {
       id: "scanner",
@@ -224,4 +224,4 @@ const Help = ({ language = "ru" }) => {
   );
 };
 
-export default Help;
+export default Tools;

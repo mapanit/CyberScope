@@ -11,6 +11,7 @@ const Tools = ({ setActiveTools, activeTools }) => {
     { id: "nmap", label: "Nmap", info: "Сканирование портов и сервисов на целевом хосте" },
     
     { id: "wappalyzer", label: "Wappalyzer", info: "Определение технологий, фреймворков и CMS на сайте" },
+    { id: "ssl-tls", label: "ssl-tls", info: "Проверка конфигурации SSL/TLS на наличие уязвимостей" },
     
     { id: "scanner", label: "Scanner", info: "Проверяет SQL инъекции, XSS, security headers, чувствительные файлы и другие уязвимости"},
     { id: "retire", label: "Retire", info: "Сканирование JavaScript библиотек на наличие уязвимостей" },

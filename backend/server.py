@@ -2533,11 +2533,13 @@ async def get_available_reports():
             'nuclei': [],
             'nmap': [],
             'web': [],
+            'cors': [],
+            'osint': [],
             'combined': []
         }
         
         # Поиск отчетов по инструментам
-        tools = ['scanner', 'nuclei', 'nmap', 'web']
+        tools = ['scanner', 'nuclei', 'nmap', 'web', 'cors', 'osint']
         
         for tool in tools:
             json_dir = reports_base / tool / "json"
@@ -2578,6 +2580,16 @@ async def get_available_reports():
                         elif tool == 'web':
                             report_info['total_vulnerabilities'] = len(data.get('vulnerabilities', []))
                             report_info['summary'] = data.get('summary', {})
+                        
+                        elif tool == 'cors':
+                            summary = data.get('summary', {})
+                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['summary'] = summary
+                        
+                        elif tool == 'osint':
+                            summary = data.get('summary', {})
+                            report_info['total_vulnerabilities'] = len(data.get('results', []))
+                            report_info['summary'] = summary
                         
                         available_reports[tool].append(report_info)
                         
