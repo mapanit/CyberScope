@@ -1,6 +1,14 @@
 # server.py
 from scheduler import get_scheduler
 from core.report_utils import create_combined_report
+from core.async_utils import (
+    save_json_report_async,
+    save_txt_report_async,
+    save_reports_parallel,
+    run_command_async,
+    session_manager,
+    AsyncSessionManager
+)
 from scanners.nmap_scanner import NmapScanner, simple_scan as nmap_scan
 from scanners.dns_scanner import simple_scan as dns_scan
 from scanners.ssl_tls_scanner import SSLTLSScanner
@@ -41,6 +49,8 @@ logger = logging.getLogger(__name__)
 models.Base.metadata.create_all(bind=engine)
 
 # Create tables if they don't exist
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -49,11 +59,14 @@ def get_db():
         db.close()
 
 # Function to verify JWT token
+
+
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> str:
     """Verify JWT token and return username"""
     try:
         token = credentials.credentials
-        payload = jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+        payload = jwt.decode(token, auth.SECRET_KEY,
+                             algorithms=[auth.ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(
@@ -69,10 +82,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
 # Глобальный словарь для отслеживания статуса сканирований
 _scan_sessions = {}
 _scan_sessions_lock = threading.Lock()
-
 
 
 def create_scan_session(scan_id: str) -> dict:
@@ -170,13 +183,14 @@ app.add_middleware(
 @app.post("/auth/register", response_model=schemas.UserResponse)
 def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
+    db_user = db.query(models.User).filter(
+        models.User.username == user.username).first()
     if db_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
         )
-    
+
     hashed_password = auth.get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
@@ -186,29 +200,32 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
+
     return db_user
 
 
 @app.post("/auth/login", response_model=schemas.Token)
 def login(user: schemas.UserLogin, db: Session = Depends(get_db)):
     """Вход пользователя и получение JWT токена"""
-    db_user = db.query(models.User).filter(models.User.username == user.username).first()
-    
+    db_user = db.query(models.User).filter(
+        models.User.username == user.username).first()
+
     if not db_user or not auth.verify_password(user.password, db_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     access_token = auth.create_access_token(data={"sub": db_user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @app.get("/auth/me", response_model=schemas.UserResponse)
 def get_current_user(username: str = Depends(verify_token), db: Session = Depends(get_db)):
     """Получить информацию о текущем пользователе"""
-    user = db.query(models.User).filter(models.User.username == username).first()
+    user = db.query(models.User).filter(
+        models.User.username == username).first()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -217,6 +234,7 @@ def get_current_user(username: str = Depends(verify_token), db: Session = Depend
     return user
 
 # ========================================================
+
 
 URL_RE = re.compile(r"^https?://", re.I)
 
@@ -319,19 +337,21 @@ async def run_command(cmd: list):
     return stdout.decode(errors="ignore"), stderr.decode(errors="ignore")
 
 
-# Функции сохранения отчетов
-def save_scanner_report(scanner: VulnerabilityScanner) -> str:
-    """Сохранить отчет сканера в JSON и TXT в backend/reports/scanner"""
-    # Используем методы сканера для правильного сохранения в reports/scanner/
-    json_path = scanner.save_json_report()
-    txt_path = scanner.save_txt_report()
+# Функции сохранения отчетов (АСИНХРОННЫЕ версии)
+async def save_scanner_report_async(scanner: VulnerabilityScanner) -> str:
+    """Асинхронно сохранить отчет сканера в JSON и TXT в backend/reports/scanner"""
+    # Используем синхронные методы сканера в executor (не блокирует event loop)
+    loop = asyncio.get_event_loop()
+    json_path = await loop.run_in_executor(None, scanner.save_json_report)
+    txt_path = await loop.run_in_executor(None, scanner.save_txt_report)
 
-    print(f"✓ Scanner отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
+    logger.info(
+        f"✓ Scanner отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
     return str(json_path)
 
 
-def save_whois_report(domain: str, output: str, error: str) -> dict:
-    """Сохранить отчет whois в JSON и TXT в backend/reports/whois"""
+async def save_whois_report_async(domain: str, output: str, error: str) -> dict:
+    """Асинхронно сохранить отчет whois в JSON и TXT в backend/reports/whois"""
     reports_base = Path(__file__).parent / "reports"
 
     # Создаем директории если нет
@@ -345,8 +365,7 @@ def save_whois_report(domain: str, output: str, error: str) -> dict:
     scan_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename_base = f"whois_{domain}_{scan_id}"
 
-    # Сохраняем JSON отчет
-    json_path = json_dir / f"{filename_base}.json"
+    # Подготавливаем данные
     report_data = {
         'tool': 'whois',
         'domain': domain,
@@ -359,11 +378,7 @@ def save_whois_report(domain: str, output: str, error: str) -> dict:
         'error': error
     }
 
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(report_data, f, indent=2, ensure_ascii=False)
-
-    # Сохраняем TXT отчет
-    txt_path = txt_dir / f"{filename_base}.txt"
+    # Подготавливаем TXT контент
     txt_content = f"""
 ╔{'═' * 78}╗
 ║{'WHOIS REPORT'.center(78)}║
@@ -395,18 +410,25 @@ def save_whois_report(domain: str, output: str, error: str) -> dict:
 {'═' * 80}
 """
 
-    with open(txt_path, 'w', encoding='utf-8') as f:
-        f.write(txt_content)
+    # Сохраняем обе отчеты ПАРАЛЛЕЛЬНО
+    json_path = json_dir / f"{filename_base}.json"
+    txt_path = txt_dir / f"{filename_base}.txt"
 
-    print(f"✓ WHOIS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
+    saved_files = await save_reports_parallel({
+        'json': (report_data, str(json_path)),
+        'txt': (txt_content, str(txt_path))
+    })
+
+    logger.info(
+        f"✓ WHOIS отчеты сохранены: JSON: {saved_files.get('json')}, TXT: {saved_files.get('txt')}")
     return {
-        'json': str(json_path),
-        'txt': str(txt_path)
+        'json': saved_files.get('json'),
+        'txt': saved_files.get('txt')
     }
 
 
-def save_nuclei_report(target: str, results: list) -> str:
-    """Сохранить отчет nuclei в JSON в backend/reports/nuclei"""
+async def save_nuclei_report_async(target: str, results: list) -> str:
+    """Асинхронно сохранить отчет nuclei в JSON в backend/reports/nuclei"""
     reports_base = Path(__file__).parent / "reports"
 
     # Создаем директории если нет
@@ -420,9 +442,7 @@ def save_nuclei_report(target: str, results: list) -> str:
         '/', '_').replace(':', '_').replace('.', '_').replace('?', '_')
     filename_base = f"nuclei_{safe_target}_{scan_id}"
 
-    # Сохраняем JSON отчет
-    json_path = json_dir / f"{filename_base}.json"
-
+    # Подготавливаем JSON данные
     message = "ничего не нашел" if not results else None
     report_data = {
         'tool': 'nuclei',
@@ -433,15 +453,16 @@ def save_nuclei_report(target: str, results: list) -> str:
         'results': results
     }
 
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(report_data, f, indent=2, ensure_ascii=False)
+    # Сохраняем JSON отчет асинхронно
+    json_path = json_dir / f"{filename_base}.json"
+    result_path = await save_json_report_async(report_data, str(json_path))
 
-    print(f"✓ JSON отчет Nuclei сохранен: {json_path}")
-    return str(json_path)
+    logger.info(f"✓ JSON отчет Nuclei сохранен: {result_path}")
+    return result_path
 
 
-def save_amass_report(target: str, results: dict) -> str:
-    """Сохранить отчет amass в JSON в backend/reports/amass"""
+async def save_amass_report_async(target: str, results: dict) -> str:
+    """Асинхронно сохранить отчет amass в JSON в backend/reports/amass"""
     reports_base = Path(__file__).parent / "reports"
 
     # Создаем директории если нет
@@ -455,9 +476,7 @@ def save_amass_report(target: str, results: dict) -> str:
         '/', '_').replace(':', '_').replace('.', '_').replace('?', '_')
     filename_base = f"amass_{safe_target}_{scan_id}"
 
-    # Сохраняем JSON отчет
-    json_path = json_dir / f"{filename_base}.json"
-
+    # Подготавливаем JSON данные
     subdomains = results.get('subdomains_sample', [])
     message = "ничего не нашел" if not subdomains else None
     report_data = {
@@ -470,38 +489,40 @@ def save_amass_report(target: str, results: dict) -> str:
         'subdomains_sample': subdomains
     }
 
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(report_data, f, indent=2, ensure_ascii=False)
+    # Сохраняем JSON отчет асинхронно
+    json_path = json_dir / f"{filename_base}.json"
+    result_path = await save_json_report_async(report_data, str(json_path))
 
-    print(f"✓ JSON отчет Amass сохранен: {json_path}")
-    return str(json_path)
+    logger.info(f"✓ JSON отчет Amass сохранен: {result_path}")
+    return result_path
 
 
-def save_cors_report(scanner: CORSScanner) -> dict:
-    """Сохранить отчет CORS в JSON и TXT в backend/reports/cors"""
-    reports_base = Path(__file__).parent / "reports"
+async def save_cors_report_async(scanner: CORSScanner) -> dict:
+    """Асинхронно сохранить отчет CORS в JSON и TXT в backend/reports/cors"""
+    # Используем executor для синхронных методов сканера
+    loop = asyncio.get_event_loop()
+    json_path = await loop.run_in_executor(None, scanner.save_json_report)
+    txt_path = await loop.run_in_executor(None, scanner.save_txt_report)
 
-    # Используем родительский класс для сохранения (уже делает сохранение)
-    json_path = scanner.save_json_report()
-    txt_path = scanner.save_txt_report()
-
-    print(f"✓ CORS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
+    logger.info(f"✓ CORS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
     return {
         'json': str(json_path),
         'txt': str(txt_path)
     }
 
 
-def save_ssl_tls_report(scanner: SSLTLSScanner) -> dict:
-    """Сохранить отчет SSL/TLS в JSON и TXT в backend/reports/ssl-tls"""
-    # Используем методы сканера для сохранения отчетов
-    scanner.save_reports()
+async def save_ssl_tls_report_async(scanner: SSLTLSScanner) -> dict:
+    """Асинхронно сохранить отчет SSL/TLS в JSON и TXT в backend/reports/ssl-tls"""
+    # Используем executor для синхронных методов сканера
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, scanner.save_reports)
 
     # Получаем пути файлов
     json_path = scanner.json_dir / f"{scanner.filename_base}.json"
     txt_path = scanner.txt_dir / f"{scanner.filename_base}.txt"
 
-    print(f"✓ SSL/TLS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
+    logger.info(
+        f"✓ SSL/TLS отчеты сохранены: JSON: {json_path}, TXT: {txt_path}")
     return {
         'json': str(json_path),
         'txt': str(txt_path)
@@ -512,7 +533,8 @@ def save_ssl_tls_report(scanner: SSLTLSScanner) -> dict:
 async def api_tool(
     tool: str = Query(...),
     q: str = Query(...),
-    allow_internal: bool = Query(False, description="Allow scanning private/loopback addresses (use with caution)"),
+    allow_internal: bool = Query(
+        False, description="Allow scanning private/loopback addresses (use with caution)"),
     username: str = Depends(verify_token)  # Require authentication
 ):
     """Run a non-streaming tool and return JSON result. Supported tools:
@@ -529,18 +551,18 @@ async def api_tool(
         domain = extract_domain(q)
         output = ""
         error = ""
-        
+
         try:
             import whois
         except ImportError:
             raise HTTPException(
                 status_code=500,
                 detail="Whois library не установлена. Установите: pip install python-whois")
-        
+
         try:
             logger.info(f"Выполняем WHOIS запрос для домена: {domain}")
             whois_result = await asyncio.to_thread(whois.whois, domain)
-            
+
             # Проверяем результат
             if whois_result:
                 output = str(whois_result)
@@ -548,7 +570,7 @@ async def api_tool(
             else:
                 error = "Whois returned empty result"
                 logger.warning(f"WHOIS вернул пустой результат для {domain}")
-                
+
         except whois.parser.PywhoisError as e:
             error = f"Whois parser error: {str(e)}"
             logger.error(f"Ошибка парсера WHOIS: {error}")
@@ -556,9 +578,8 @@ async def api_tool(
             error = f"Whois error: {str(e)}"
             logger.error(f"Ошибка WHOIS: {error}")
 
-        # Сохраняем отчет
-        reports_base = Path(__file__).parent / "reports"
-        save_whois_report(domain, output, error)
+        # Сохраняем отчет асинхронно
+        await save_whois_report_async(domain, output, error)
 
         return {"tool": "whois", "output": output, "error": error}
 
@@ -628,7 +649,7 @@ async def api_scanner(
         print(f"[DEBUG] Сохраняем JSON отчет...")
         json_report_path = scanner.save_json_report()
         print(f"[DEBUG] JSON путь: {json_report_path}")
-        
+
         print(f"[DEBUG] Сохраняем TXT отчет...")
         txt_report_path = scanner.save_txt_report()
         print(f"[DEBUG] TXT путь: {txt_report_path}")
@@ -982,29 +1003,25 @@ async def wappalyzer_stream(target: str = Query(..., description="URL или д�
     async def stream_wappalyzer():
         try:
             validate_target(target, allow_internal=allow_internal)
-
             scanner = WappalyzerScanner(target)
-
-            yield "data: {\"status\": \"Загружаем страницу...\"}\n\n"
-
-            html = scanner.fetch_page()
-            if not html:
-                yield "data: {\"error\": \"Не удалось загрузить страницу\"}\n\n"
-                return
 
             yield "data: {\"status\": \"Анализируем технологии...\"}\n\n"
 
+            # Не вызывать fetch_page() отдельно! scan() делает это сам
             scanner.scan()
 
-            # Отправляем каждую обнаруженную технологию
             for tech in scanner.detected_technologies:
-                yield f"data: {json.dumps({{'technology': tech['technology']}})} \n\n"
+                yield f"data: {json.dumps({'technology': tech['technology']})} \n\n"
 
-            # Сохраняем отчеты
-            yield "data: {\"status\": \"Сохраняем отчеты...\"}\n\n"
-            reports = scanner.save_reports()
+                # Отправляем каждую обнаруженную технологию
+                for tech in scanner.detected_technologies:
+                    yield f"data: {json.dumps({{'technology': tech['technology']}})} \n\n"
 
-            yield f"data: {json.dumps({{'status': 'completed', 'total': len(scanner.detected_technologies), 'reports': reports}})}\n\n"
+                # Сохраняем отчеты
+                yield "data: {\"status\": \"Сохраняем отчеты...\"}\n\n"
+                reports = scanner.save_reports()
+
+                yield f"data: {json.dumps({{'status': 'completed', 'total': len(scanner.detected_technologies), 'reports': reports}})}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({{'error': str(e)}})}\n\n"
@@ -1035,7 +1052,7 @@ async def api_cors(
         await asyncio.to_thread(scanner.run_all_checks)
 
         # Сохраняем отчеты
-        reports = save_cors_report(scanner)
+        reports = await save_cors_report_async(scanner)
 
         # Создаем объединённый отчет
         scan_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1062,6 +1079,7 @@ async def api_cors(
             status_code=500, detail=f"Ошибка при CORS сканировании: {str(e)}")
 
 
+
 @app.get("/api/ssl-tls")
 async def api_ssl_tls(
     target: str = Query(...,
@@ -1086,7 +1104,7 @@ async def api_ssl_tls(
         scanner.run_scan()
 
         # Сохраняем отчеты
-        reports = save_ssl_tls_report(scanner)
+        reports = await save_ssl_tls_report_async(scanner)
 
         # Создаем объединённый отчет после сканирования
         scan_id = scanner.scan_id
@@ -1381,7 +1399,7 @@ async def run_selected_tools(
 
                 elif tool == 'nuclei':
                     result = await asyncio.to_thread(nuclei_run_scan, target, True, str(reports_base))
-                    json_path = save_nuclei_report(
+                    json_path = await save_nuclei_report_async(
                         target, result if isinstance(result, list) else [])
                     results[tool] = {
                         'status': 'success',
@@ -1419,7 +1437,7 @@ async def run_selected_tools(
 
                 elif tool == 'amass':
                     result = await asyncio.to_thread(amass_scan, target, "passive", 300, str(reports_base))
-                    json_path = save_amass_report(target, result)
+                    json_path = await save_amass_report_async(target, result)
                     results[tool] = {
                         'status': 'success',
                         'data': result,
@@ -1434,7 +1452,7 @@ async def run_selected_tools(
                     scanner_obj = VulnerabilityScanner(
                         target, output_name, str(reports_base))
                     await asyncio.to_thread(scanner_obj.run_all_checks)
-                    json_path = save_scanner_report(scanner_obj)
+                    json_path = await save_scanner_report_async(scanner_obj)
                     results[tool] = {
                         'status': 'success',
                         'vulnerabilities': scanner_obj.found_vulnerabilities,
@@ -1448,19 +1466,21 @@ async def run_selected_tools(
                     domain = extract_domain(target)
                     output = ""
                     error = ""
-                    
+
                     try:
                         import whois
-                        logger.info(f"Выполняем WHOIS запрос для домена: {domain}")
+                        logger.info(
+                            f"Выполняем WHOIS запрос для домена: {domain}")
                         whois_result = await asyncio.to_thread(whois.whois, domain)
-                        
+
                         if whois_result:
                             output = str(whois_result)
-                            logger.info(f"WHOIS успешно: {len(output)} символов")
+                            logger.info(
+                                f"WHOIS успешно: {len(output)} символов")
                         else:
                             error = "Whois returned empty result"
                             logger.warning(f"WHOIS пуст для {domain}")
-                            
+
                     except ImportError:
                         error = "python-whois library not installed"
                         logger.error(error)
@@ -1471,7 +1491,7 @@ async def run_selected_tools(
                         error = f"Whois error: {str(e)}"
                         logger.error(error)
 
-                    reports = await asyncio.to_thread(save_whois_report, domain, output, error)
+                    reports = await save_whois_report_async(domain, output, error)
                     results[tool] = {
                         'status': 'success' if output else 'warning',
                         'output': output,
@@ -1525,7 +1545,7 @@ async def run_selected_tools(
                 elif tool == 'cors':
                     scanner = CORSScanner(target, None, str(reports_base))
                     await asyncio.to_thread(scanner.run_all_checks)
-                    reports = save_cors_report(scanner)
+                    reports = await save_cors_report_async(scanner)
                     results[tool] = {
                         'status': 'success',
                         'target': target,
@@ -1538,7 +1558,7 @@ async def run_selected_tools(
                     scanner = SSLTLSScanner(
                         target, reports_dir=str(reports_base))
                     await asyncio.to_thread(scanner.run_scan)
-                    reports = save_ssl_tls_report(scanner)
+                    reports = await save_ssl_tls_report_async(scanner)
                     results[tool] = {
                         'status': 'success',
                         'target': target,
@@ -1577,6 +1597,7 @@ async def run_selected_tools(
                             'error': 'Nmap scan failed'
                         }
 
+              
             except Exception as e:
                 results[tool] = {
                     'status': 'error',
@@ -1584,8 +1605,12 @@ async def run_selected_tools(
                 }
 
         # Создаем объединенный отчет (используем существующий scan_id)
-        combined_reports = create_combined_report(
+        try:
+            combined_reports = create_combined_report(
             scan_id, reports_base, recent_minutes=10)
+        except Exception as e:
+            logger.error(f"Ошибка создания combined отчета: {e}", exc_info=True)
+            combined_reports = {}
 
         # Завершаем сессию сканирования
         end_scan_session(scan_id)
@@ -2026,6 +2051,12 @@ async def clear_all_reports():
             reports_base / "osint" / "txt",
             reports_base / "scanner" / "json",
             reports_base / "scanner" / "txt",
+            reports_base / "web" / "json",
+            reports_base / "web" / "txt",
+            reports_base / "cors" / "json",
+            reports_base / "cors" / "txt",
+            reports_base / "nmap" / "json",
+            reports_base / "nmap" / "txt",
             reports_base / "word",
         ]
 
@@ -2049,9 +2080,6 @@ async def clear_all_reports():
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при очистке отчетов: {str(e)}")
-
-
-# ============= SCHEDULER ENDPOINTS =============
 
 
 # Получиваем глобальный экземпляр планировщика
@@ -2526,7 +2554,7 @@ async def get_available_reports():
     """
     try:
         reports_base = Path(__file__).parent / "reports"
-        
+
         # Структура для хранения отчетов
         available_reports = {
             'scanner': [],
@@ -2537,10 +2565,10 @@ async def get_available_reports():
             'osint': [],
             'combined': []
         }
-        
+
         # Поиск отчетов по инструментам
         tools = ['scanner', 'nuclei', 'nmap', 'web', 'cors', 'osint']
-        
+
         for tool in tools:
             json_dir = reports_base / tool / "json"
             if json_dir.exists():
@@ -2548,55 +2576,62 @@ async def get_available_reports():
                     try:
                         with open(json_file, 'r', encoding='utf-8') as f:
                             data = json.load(f)
-                        
+
                         # Извлекаем информацию для отображения
                         report_info = {
                             'filename': json_file.name,
                             'path': str(json_file.relative_to(reports_base)),
                             'tool': tool,
                             'scan_datetime': data.get('scan_datetime', ''),
-                            'target': data.get('scan_info', {}).get('target_url', 
-                                    data.get('target', 'Unknown')),
+                            'target': data.get('scan_info', {}).get('target_url',
+                                                                    data.get('target', 'Unknown')),
                             'total_vulnerabilities': 0,
                             'summary': {}
                         }
-                        
+
                         # Извлекаем статистику в зависимости от типа инструмента
                         if tool == 'scanner':
                             summary = data.get('summary', {})
-                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['total_vulnerabilities'] = summary.get(
+                                'total_vulnerabilities', 0)
                             report_info['summary'] = summary
-                            
+
                         elif tool == 'nuclei':
-                            total = data.get('total_findings', len(data.get('results', [])))
+                            total = data.get('total_findings', len(
+                                data.get('results', [])))
                             report_info['total_vulnerabilities'] = total
-                            report_info['summary'] = data.get('by_severity', {})
-                            
+                            report_info['summary'] = data.get(
+                                'by_severity', {})
+
                         elif tool == 'nmap':
                             summary = data.get('summary', {})
-                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['total_vulnerabilities'] = summary.get(
+                                'total_vulnerabilities', 0)
                             report_info['summary'] = summary
-                            
+
                         elif tool == 'web':
-                            report_info['total_vulnerabilities'] = len(data.get('vulnerabilities', []))
+                            report_info['total_vulnerabilities'] = len(
+                                data.get('vulnerabilities', []))
                             report_info['summary'] = data.get('summary', {})
-                        
+
                         elif tool == 'cors':
                             summary = data.get('summary', {})
-                            report_info['total_vulnerabilities'] = summary.get('total_vulnerabilities', 0)
+                            report_info['total_vulnerabilities'] = summary.get(
+                                'total_vulnerabilities', 0)
                             report_info['summary'] = summary
-                        
+
                         elif tool == 'osint':
                             summary = data.get('summary', {})
-                            report_info['total_vulnerabilities'] = len(data.get('results', []))
+                            report_info['total_vulnerabilities'] = len(
+                                data.get('results', []))
                             report_info['summary'] = summary
-                        
+
                         available_reports[tool].append(report_info)
-                        
+
                     except Exception as e:
                         print(f"Ошибка чтения {json_file}: {e}")
                         continue
-        
+
         # Поиск комбинированных отчетов
         combined_dir = reports_base / "combined" / "json"
         if combined_dir.exists():
@@ -2604,7 +2639,7 @@ async def get_available_reports():
                 try:
                     with open(json_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    
+
                     report_info = {
                         'filename': json_file.name,
                         'path': str(json_file.relative_to(reports_base)),
@@ -2618,23 +2653,26 @@ async def get_available_reports():
                 except Exception as e:
                     print(f"Ошибка чтения {json_file}: {e}")
                     continue
-        
+
         # Сортируем по дате (новые сверху)
         for tool in available_reports:
-            available_reports[tool].sort(key=lambda x: x.get('scan_datetime', ''), reverse=True)
-        
+            available_reports[tool].sort(
+                key=lambda x: x.get('scan_datetime', ''), reverse=True)
+
         return {
             'status': 'success',
             'reports': available_reports
         }
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка получения списка отчетов: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка получения списка отчетов: {str(e)}")
 
 
 @app.get("/api/report-content")
 async def get_report_content(
-    report_path: str = Query(..., description="Путь к файлу отчета относительно reports"),
+    report_path: str = Query(...,
+                             description="Путь к файлу отчета относительно reports"),
     username: str = Depends(verify_token)
 ):
     """
@@ -2644,27 +2682,64 @@ async def get_report_content(
         # Защита от path traversal
         if ".." in report_path or report_path.startswith('/'):
             raise HTTPException(status_code=400, detail="Недопустимый путь")
-        
+
         reports_base = Path(__file__).parent / "reports"
         full_path = reports_base / report_path
-        
+
         if not full_path.exists():
             raise HTTPException(status_code=404, detail="Файл не найден")
-        
+
         with open(full_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         return {
             'status': 'success',
             'data': data,
             'filename': full_path.name,
             'tool': report_path.split('/')[0] if '/' in report_path else 'unknown'
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ошибка чтения отчета: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Ошибка чтения отчета: {str(e)}")
+
+
+def resolve_source_path(source_path: str) -> str:
+    """Resolve source path by checking multiple possible locations"""
+    from pathlib import Path
+
+    # Если путь уже абсолютный и существует
+    if os.path.exists(source_path):
+        return source_path
+
+    # Проверяем относительно текущей директории
+    current_dir = Path.cwd()
+    candidate = current_dir / source_path
+    if candidate.exists():
+        return str(candidate)
+
+    # Проверяем относительно директории сервера
+    server_dir = Path(__file__).parent
+    candidate = server_dir / source_path
+    if candidate.exists():
+        return str(candidate)
+
+    # Проверяем относительно родительской директории
+    candidate = server_dir.parent / source_path
+    if candidate.exists():
+        return str(candidate)
+
+    # Проверяем относительно backend директории (если есть)
+    backend_dir = server_dir.parent / "backend"
+    if backend_dir.exists():
+        candidate = backend_dir / source_path
+        if candidate.exists():
+            return str(candidate)
+
+    # Если ничего не найдено, возвращаем исходный путь (вызовет ошибку позже)
+    return source_path
 
 
 if __name__ == "__main__":

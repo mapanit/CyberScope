@@ -6,11 +6,11 @@ sudo systemctl start postgresql
 sudo -u postgres psql
 
 -- Создание пользователя
-CREATE USER admin WITH PASSWORD 'mypassword';
+CREATE USER admin WITH PASSWORD 'admin';
 -- Создание базы данных с владельцем
 CREATE DATABASE db_cs OWNER admin;
 
 -- Выход из psql
 \q
 
-psql -h localhost -U admin -d db_cyberscope -W
+psql -h localhost -U admin -d db_cs -W

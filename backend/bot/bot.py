@@ -1,20 +1,18 @@
 import os
 import asyncio
 import logging
-import aiohttp
 import json
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandStart, StateFilter
+from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api")
 
 if os.path.exists("/app/reports/combined"):
     REPORTS_DIR = Path("/app/reports/combined")
@@ -31,9 +29,6 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Хранилище активных сканирований
-active_scans = {}
-
 
 def get_reports_by_type(report_type: str) -> list:
     """Получить список отчетов по типу (json или txt)"""
@@ -46,24 +41,76 @@ def get_reports_by_type(report_type: str) -> list:
     return [f.name for f in files if f.is_file()]
 
 
-# Определение состояний для FSM
-class ScanForm(StatesGroup):
-    target = State()
-    tools = State()
-    allow_internal = State()
-    scanning = State()
-
-
-class ReportForm(StatesGroup):
-    viewing_reports = State()
+def get_reports_statistics() -> dict:
+    """Получить подробную статистику по отчетам"""
+    stats = {
+        "json": {"total": 0, "files": [], "total_size_mb": 0},
+        "txt": {"total": 0, "files": [], "total_size_kb": 0},
+        "by_date": {},
+        "latest_report": None
+    }
+    
+    # Статистика по JSON
+    json_dir = REPORTS_DIR / "json"
+    if json_dir.exists():
+        for file in json_dir.glob("*"):
+            if file.is_file():
+                size_mb = file.stat().st_size / (1024 * 1024)
+                mtime = datetime.fromtimestamp(file.stat().st_mtime)
+                date_key = mtime.strftime("%Y-%m-%d")
+                
+                stats["json"]["total"] += 1
+                stats["json"]["total_size_mb"] += size_mb
+                stats["json"]["files"].append({
+                    "name": file.name,
+                    "size_mb": size_mb,
+                    "date": mtime
+                })
+                
+                # Статистика по датам
+                if date_key not in stats["by_date"]:
+                    stats["by_date"][date_key] = 0
+                stats["by_date"][date_key] += 1
+    
+    # Статистика по TXT
+    txt_dir = REPORTS_DIR / "txt"
+    if txt_dir.exists():
+        for file in txt_dir.glob("*"):
+            if file.is_file():
+                size_kb = file.stat().st_size / 1024
+                mtime = datetime.fromtimestamp(file.stat().st_mtime)
+                
+                stats["txt"]["total"] += 1
+                stats["txt"]["total_size_kb"] += size_kb
+                stats["txt"]["files"].append({
+                    "name": file.name,
+                    "size_kb": size_kb,
+                    "date": mtime
+                })
+    
+    # Находим последний отчет
+    all_files = []
+    for report_type in ["json", "txt"]:
+        for file in stats[report_type]["files"]:
+            all_files.append((file["date"], report_type, file["name"]))
+    
+    if all_files:
+        latest = max(all_files, key=lambda x: x[0])
+        stats["latest_report"] = {
+            "date": latest[0],
+            "type": latest[1],
+            "name": latest[2]
+        }
+    
+    return stats
 
 
 def get_main_keyboard():
     """Получить главную клавиатуру"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text='🔍 Сканирование'), KeyboardButton(text='📥 Отчеты')],
-            [KeyboardButton(text='❓ Справка'), KeyboardButton(text='⚙️ Статус')]
+            [KeyboardButton(text='📊 Статистика'), KeyboardButton(text='📥 Отчеты')],
+            [KeyboardButton(text='❓ Справка')]
         ],
         resize_keyboard=True
     )
@@ -74,8 +121,7 @@ def get_back_keyboard():
     """Получить клавиатуру возврата в главное меню"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text='🏠 Главное меню')],
-            [KeyboardButton(text='❌ Отмена')]
+            [KeyboardButton(text='🏠 Главное меню')]
         ],
         resize_keyboard=True
     )
@@ -88,11 +134,12 @@ async def cmd_start(message: Message):
     keyboard = get_main_keyboard()
     await message.answer(
         f"Привет, {message.from_user.first_name}! 👋\n\n"
-        "Я CyberScope бот для сканирования безопасности.\n\n"
+        "Я CyberScope бот для просмотра и анализа отчетов безопасности.\n\n"
         "*Возможности:*\n"
-        "🔍 Запуск различных сканирований\n"
+        "📊 Просмотр статистики отчетов\n"
         "📥 Скачивание отчетов (JSON, TXT)\n"
-        "⚡ Быстрая обработка результатов\n",
+        "📈 Аналитика по уязвимостям\n"
+        "🔍 Поиск по отчетам\n",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -104,60 +151,152 @@ async def cmd_help(message: Message):
     help_text = """
 📋 *Доступные команды:*
 
-/start - начать работу
+/start - главное меню
+/stats - статистика отчетов
+/search <текст> - поиск по отчетам
+/list_json - список JSON отчетов
+/list_txt - список TXT отчетов
 
+*Функциональность:*
+📊 Просмотр статистики отчетов
+📥 Скачивание отчетов (JSON, TXT)
+📈 Аналитика по найденным уязвимостям
+🔍 Поиск по содержимому отчетов
 
-*Доступные инструменты сканирования:*
-🔹 wappalyzer - определение технологий
-🔹 osint - поиск поддоменов и информации
-🔹 web - веб-разведка (URL и директории)
-🔹 retire - уязвимости JS библиотек
-
-*Как пользоваться:*
-1. Используйте кнопки в главном меню
-2. Введите цель сканирования
-3. Выберите инструменты
-4. Дождитесь завершения
-5. Скачайте отчет
+*Отчеты:*
+Отчеты автоматически ищутся в папке:
+`reports/combined/json/` - JSON отчеты
+`reports/combined/txt/` - TXT отчеты
     """
     keyboard = get_main_keyboard()
     await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
 
 
-# Обработчик текстовых кнопок
-@dp.message(F.text == "🔍 Сканирование")
-async def handle_scan_button(message: Message, state: FSMContext):
-    """Обработчик кнопки 'Сканирование'"""
+# Обработчик кнопки "📊 Статистика"
+@dp.message(F.text == "📊 Статистика")
+async def handle_stats_button(message: Message):
+    """Обработчик кнопки 'Статистика' - показывает подробную статистику по отчетам"""
+    stats = get_reports_statistics()
+    
+    # Формируем сообщение со статистикой
+    stats_text = f"""
+📊 *СТАТИСТИКА ОТЧЕТОВ*
+{'=' * 30}
+
+📄 *JSON отчеты:*
+• Всего: {stats['json']['total']}
+• Общий размер: {stats['json']['total_size_mb']:.2f} MB
+
+📝 *TXT отчеты:*
+• Всего: {stats['txt']['total']}
+• Общий размер: {stats['txt']['total_size_kb']:.1f} KB
+
+{'=' * 30}
+📈 *Общая информация:*
+• Всего отчетов: {stats['json']['total'] + stats['txt']['total']}
+• Общий размер всех отчетов: {(stats['json']['total_size_mb'] + stats['txt']['total_size_kb'] / 1024):.2f} MB
+    """
+    
+    # Добавляем информацию о последнем отчете
+    if stats['latest_report']:
+        stats_text += f"""
+{'=' * 30}
+🆕 *Последний отчет:*
+• Тип: {stats['latest_report']['type'].upper()}
+• Имя: `{stats['latest_report']['name'][:50]}`
+• Дата: {stats['latest_report']['date'].strftime('%Y-%m-%d %H:%M:%S')}
+    """
+    
+    # Добавляем статистику по дням
+    if stats['by_date']:
+        stats_text += f"\n{'=' * 30}\n📅 *Активность по дням:*\n"
+        for date, count in sorted(stats['by_date'].items(), reverse=True)[:5]:
+            stats_text += f"• {date}: {count} отчет(ов)\n"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Начать сканирование", callback_data="start_scan")],
-        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="📊 Детальная статистика", callback_data="detailed_stats")],
+        [InlineKeyboardButton(text="📥 Перейти к отчетам", callback_data="download_menu")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_stats")]
     ])
     
-    await message.answer(
-        "🔍 *Сканирование*\n\n"
-        "Выберите действие:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+    await message.answer(stats_text, reply_markup=keyboard, parse_mode="Markdown")
 
 
+# Обработчик кнопки "📥 Отчеты"
 @dp.message(F.text == "📥 Отчеты")
 async def handle_reports_button(message: Message):
     """Обработчик кнопки 'Отчеты'"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 JSON отчеты", callback_data="list_json")],
         [InlineKeyboardButton(text="📝 TXT отчеты", callback_data="list_txt")],
-        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text="🔍 Поиск по отчетам", callback_data="search_reports")],
+        [InlineKeyboardButton(text="📈 Аналитика", callback_data="view_analytics")]
     ])
     
+    stats = get_reports_statistics()
+    
     await message.answer(
-        "📥 *Скачивание отчетов*\n\n"
-        "Выберите формат:",
+        f"📥 *Меню отчетов*\n\n"
+        f"📊 JSON: {stats['json']['total']} файлов | {stats['json']['total_size_mb']:.1f} MB\n"
+        f"📝 TXT: {stats['txt']['total']} файлов | {stats['txt']['total_size_kb']:.0f} KB\n\n"
+        f"Выберите действие:",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
 
+#
+
+# Детальная статистика по callback
+@dp.callback_query(F.data == "detailed_stats")
+async def detailed_stats(callback: types.CallbackQuery):
+    """Показать детальную статистику"""
+    stats = get_reports_statistics()
+    
+    stats_text = f"""
+📊 *ДЕТАЛЬНАЯ СТАТИСТИКА*
+{'=' * 35}
+
+📄 *JSON отчеты (топ 10 по размеру):*
+"""
+    
+    # Топ 10 JSON отчетов по размеру
+    sorted_json = sorted(stats['json']['files'], key=lambda x: x['size_mb'], reverse=True)[:10]
+    for i, file in enumerate(sorted_json, 1):
+        stats_text += f"{i}. `{file['name'][:40]}` - {file['size_mb']:.2f} MB\n"
+    
+    stats_text += f"\n📝 *TXT отчеты (топ 10 по размеру):*\n"
+    
+    # Топ 10 TXT отчетов по размеру
+    sorted_txt = sorted(stats['txt']['files'], key=lambda x: x['size_kb'], reverse=True)[:10]
+    for i, file in enumerate(sorted_txt, 1):
+        stats_text += f"{i}. `{file['name'][:40]}` - {file['size_kb']:.1f} KB\n"
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_stats")]
+    ])
+    
+    await callback.message.edit_text(stats_text, reply_markup=keyboard, parse_mode="Markdown")
+    await callback.answer()
+
+
+# Обновление статистики
+@dp.callback_query(F.data == "refresh_stats")
+async def refresh_stats(callback: types.CallbackQuery):
+    """Обновить статистику"""
+    await callback.answer("🔄 Статистика обновлена")
+    await handle_stats_button(callback.message)
+
+
+# Назад к статистике
+@dp.callback_query(F.data == "back_to_stats")
+async def back_to_stats(callback: types.CallbackQuery):
+    """Вернуться к статистике"""
+    await handle_stats_button(callback.message)
+    await callback.answer()
+
+
+# Обработчик кнопки "❓ Справка"
 @dp.message(F.text == "❓ Справка")
 async def handle_help_button(message: Message):
     """Обработчик кнопки 'Справка'"""
@@ -165,11 +304,15 @@ async def handle_help_button(message: Message):
 📋 *Доступные команды:*
 
 /start - главное меню
+/stats - статистика отчетов
+/search <текст> - поиск по отчетам
+/list_json - список JSON отчетов
+/list_txt - список TXT отчетов
 
 *Функциональность:*
-🔍 Запуск сканирования через API
+📊 Просмотр статистики отчетов
 📥 Скачивание отчетов (JSON, TXT)
-📊 Просмотр доступных отчетов
+🔍 Поиск по содержимому отчетов
 
 *Отчеты:*
 Отчеты автоматически ищутся в папке:
@@ -179,39 +322,6 @@ async def handle_help_button(message: Message):
     
     keyboard = get_main_keyboard()
     await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
-
-
-@dp.message(F.text == "⚙️ Статус")
-async def handle_status_button(message: Message):
-    """Обработчик кнопки 'Статус'"""
-    active_scans_count = len(active_scans)
-    json_files = get_reports_by_type("json")
-    txt_files = get_reports_by_type("txt")
-    
-    status_text = f"""
-⚙️ *Статус системы*
-
-🤖 Бот: ✅ Онлайн
-📁 Папка отчетов: ✅ {REPORTS_DIR}
-🔄 Активных сканирований: {active_scans_count}
-
-📊 *Статистика отчетов:*
-📄 JSON отчетов: {len(json_files)}
-📝 TXT отчетов: {len(txt_files)}
-
-🔗 API: {API_BASE_URL}
-    """
-    
-    keyboard = get_main_keyboard()
-    await message.answer(status_text, reply_markup=keyboard, parse_mode="Markdown")
-
-
-# Обработчик команды /cancel
-@dp.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext):
-    await state.clear()
-    keyboard = get_main_keyboard()
-    await message.answer("❌ Операция отменена.", reply_markup=keyboard)
 
 
 # Обработчик кнопки "🏠 Главное меню"
@@ -228,209 +338,6 @@ async def handle_main_menu_button(message: Message, state: FSMContext):
     )
 
 
-# Обработчик кнопки "❌ Отмена"
-@dp.message(F.text == "❌ Отмена")
-async def handle_cancel_button(message: Message, state: FSMContext):
-    """Обработчик кнопки 'Отмена'"""
-    await state.clear()
-    keyboard = get_main_keyboard()
-    await message.answer("❌ Операция отменена.", reply_markup=keyboard)
-
-
-# Обработчик callback - начать сканирование
-@dp.callback_query(F.data == "start_scan")
-async def process_start_scan(callback: types.CallbackQuery, state: FSMContext):
-    keyboard = get_back_keyboard()
-    await callback.message.answer(
-        "📍 Введите цель сканирования:\n"
-        "(например: example.com или http://example.com:5000)",
-        reply_markup=keyboard
-    )
-    await state.set_state(ScanForm.target)
-    await callback.answer()
-
-
-# Обработчик ввода target
-@dp.message(StateFilter(ScanForm.target))
-async def process_target(message: Message, state: FSMContext):
-    if not message.text or len(message.text.strip()) < 3:
-        await message.answer("❌ Некорректный target. Попробуйте еще раз.")
-        return
-    
-    await state.update_data(target=message.text.strip(), user_id=message.from_user.id)
-    
-    # Выбор инструментов
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔹 Wappalyzer", callback_data="tool_wappalyzer")],
-        [InlineKeyboardButton(text="🔹 OSINT", callback_data="tool_osint")],
-        [InlineKeyboardButton(text="🔹 Web", callback_data="tool_web")],
-        [InlineKeyboardButton(text="🔹 Retire", callback_data="tool_retire")],
-        [InlineKeyboardButton(text="✅ Все инструменты", callback_data="tool_all")],
-        [InlineKeyboardButton(text="⏭️ Продолжить", callback_data="tools_selected")]
-    ])
-    
-    await message.answer(
-        f"✅ Target: `{message.text.strip()}`\n\n"
-        "🛠️ Выберите инструменты для сканирования:\n"
-        "(Можно нажать несколько раз или выбрать 'Все инструменты')",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    await state.set_state(ScanForm.tools)
-
-
-# Обработчик выбора инструментов
-@dp.callback_query(F.data.startswith("tool_"))
-async def process_tool_selection(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    tools = data.get("tools", [])
-    
-    tool_map = {
-        "tool_wappalyzer": "wappalyzer",
-        "tool_osint": "osint",
-        "tool_web": "web",
-        "tool_retire": "retire",
-        "tool_all": ["wappalyzer", "osint", "web", "retire"]
-    }
-    
-    if callback.data == "tool_all":
-        tools = ["wappalyzer", "osint", "web", "retire"]
-        await callback.message.edit_text(
-            f"✅ Выбраны все инструменты: wappalyzer, osint, web, retire\n\n"
-            "Нажмите 'Продолжить' для запуска сканирования",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⏭️ Продолжить", callback_data="tools_selected")]
-            ])
-        )
-    elif callback.data == "tools_selected":
-        pass
-    else:
-        tool = tool_map[callback.data]
-        if tool not in tools:
-            tools.append(tool)
-        else:
-            tools.remove(tool)
-        
-        tools_text = ", ".join(tools) if tools else "не выбраны"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔹 Wappalyzer", callback_data="tool_wappalyzer")],
-            [InlineKeyboardButton(text="🔹 OSINT", callback_data="tool_osint")],
-            [InlineKeyboardButton(text="🔹 Web", callback_data="tool_web")],
-            [InlineKeyboardButton(text="🔹 Retire", callback_data="tool_retire")],
-            [InlineKeyboardButton(text="✅ Все инструменты", callback_data="tool_all")],
-            [InlineKeyboardButton(text="⏭️ Продолжить", callback_data="tools_selected")]
-        ])
-        
-        await callback.message.edit_text(
-            f"✅ Выбранные инструменты: {tools_text}",
-            reply_markup=keyboard
-        )
-    
-    await state.update_data(tools=tools)
-    await callback.answer()
-
-
-# Запуск сканирования
-@dp.callback_query(F.data == "tools_selected")
-async def process_tools_selected(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    tools = data.get("tools", [])
-    target = data.get("target")
-    user_id = data.get("user_id")
-    
-    if not tools:
-        await callback.answer("❌ Выберите хотя бы один инструмент!", show_alert=True)
-        return
-    
-    tools_str = ",".join(tools)
-    scan_id = f"{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    await state.update_data(scan_id=scan_id)
-    await state.set_state(ScanForm.scanning)
-    
-    await callback.message.edit_text(
-        f"🔄 Началось сканирование...\n\n"
-        f"Target: `{target}`\n"
-        f"Инструменты: {tools_str}\n\n"
-        f"Scan ID: `{scan_id}`\n\n"
-        "⏳ Это может занять несколько минут..."
-    )
-    await callback.answer()
-    
-    # Запуск асинхронного сканирования
-    asyncio.create_task(run_scan(callback.message, target, tools_str, scan_id, state))
-
-
-async def run_scan(message: Message, target: str, tools: str, scan_id: str, state: FSMContext):
-    """Запуск сканирования через API"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{API_BASE_URL}/run-selected-tools"
-            params = {
-                "target": target,
-                "tools": tools,
-                "allow_internal": "true"
-            }
-            
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=3600)) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    
-                    # Формируем отчет о результатах
-                    report_text = f"✅ *Сканирование завершено!*\n\n"
-                    report_text += f"Scan ID: `{scan_id}`\n"
-                    report_text += f"Target: `{target}`\n\n"
-                    
-                    for tool, tool_result in result.get("results", {}).items():
-                        status = "✅" if tool_result.get("status") == "success" else "❌"
-                        report_text += f"{status} {tool.upper()}\n"
-                    
-                    # Кнопки для скачивания отчетов
-                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="📄 Скачать JSON", callback_data=f"download_json_{scan_id}")],
-                        [InlineKeyboardButton(text="📝 Скачать TXT", callback_data=f"download_txt_{scan_id}")],
-                        [InlineKeyboardButton(text="📊 К отчетам", callback_data="view_reports")],
-                        [InlineKeyboardButton(text="🔍 Новое сканирование", callback_data="start_scan")]
-                    ])
-                    
-                    main_keyboard = get_main_keyboard()
-                    await message.answer(report_text, reply_markup=keyboard, parse_mode="Markdown")
-                    await message.answer("Выберите дальнейшее действие:", reply_markup=main_keyboard)
-                    await state.clear()
-                else:
-                    keyboard = get_main_keyboard()
-                    await message.answer(f"❌ Ошибка сканирования: {resp.status}", reply_markup=keyboard)
-                    await state.clear()
-    except asyncio.TimeoutError:
-        keyboard = get_main_keyboard()
-        await message.answer("⏱️ Превышено время ожидания сканирования. Попробуйте позже.", reply_markup=keyboard)
-        await state.clear()
-    except Exception as e:
-        logger.error(f"Ошибка при сканировании: {e}")
-        keyboard = get_main_keyboard()
-        await message.answer(f"❌ Ошибка: {str(e)}", reply_markup=keyboard)
-        await state.clear()
-
-
-# Меню скачивания отчетов
-@dp.callback_query(F.data == "download_menu")
-async def download_menu(callback: types.CallbackQuery):
-    """Меню скачивания отчетов"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 JSON отчеты", callback_data="list_json")],
-        [InlineKeyboardButton(text="📝 TXT отчеты", callback_data="list_txt")],
-        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
-    ])
-    
-    await callback.message.edit_text(
-        "📥 *Меню скачивания отчетов*\n\n"
-        "Выберите формат отчета:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-
 # Список JSON отчетов
 @dp.callback_query(F.data == "list_json")
 async def list_json_reports(callback: types.CallbackQuery):
@@ -443,14 +350,18 @@ async def list_json_reports(callback: types.CallbackQuery):
     
     # Создаём кнопки для каждого файла
     buttons = []
-    for filename in json_files[:10]:
+    for filename in json_files[:15]:
+        # Получаем размер файла
+        file_path = REPORTS_DIR / "json" / filename
+        size_mb = file_path.stat().st_size / (1024 * 1024) if file_path.exists() else 0
         buttons.append([
             InlineKeyboardButton(
-                text=f"📄 {filename[:45]}{'...' if len(filename) > 45 else ''}",
+                text=f"📄 {filename[:35]}{'...' if len(filename) > 35 else ''} ({size_mb:.1f}MB)",
                 callback_data=f"dl_json_{filename}"
             )
         ])
     
+    buttons.append([InlineKeyboardButton(text="🔍 Поиск", callback_data="search_reports")])
     buttons.append([InlineKeyboardButton(text="🏠 Назад", callback_data="download_menu")])
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -476,14 +387,17 @@ async def list_txt_reports(callback: types.CallbackQuery):
     
     # Создаём кнопки для каждого файла
     buttons = []
-    for filename in txt_files[:10]:
+    for filename in txt_files[:15]:
+        file_path = REPORTS_DIR / "txt" / filename
+        size_kb = file_path.stat().st_size / 1024 if file_path.exists() else 0
         buttons.append([
             InlineKeyboardButton(
-                text=f"📝 {filename[:45]}{'...' if len(filename) > 45 else ''}",
+                text=f"📝 {filename[:35]}{'...' if len(filename) > 35 else ''} ({size_kb:.0f}KB)",
                 callback_data=f"dl_txt_{filename}"
             )
         ])
     
+    buttons.append([InlineKeyboardButton(text="🔍 Поиск", callback_data="search_reports")])
     buttons.append([InlineKeyboardButton(text="🏠 Назад", callback_data="download_menu")])
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -528,13 +442,9 @@ async def download_report(callback: types.CallbackQuery):
         file = FSInputFile(str(file_path))
         await callback.message.answer_document(
             file,
-            caption=f"📄 {filename}\n\nЗагруженo в {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            caption=f"📄 {filename}\n\nЗагружен: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\nРазмер: {file_size / (1024*1024):.2f} MB" if report_type == "json" else f"Размер: {file_size / 1024:.1f} KB",
             parse_mode="Markdown"
         )
-        
-        # Добавляем клавиатуру навигации после скачивания
-        keyboard = get_main_keyboard()
-        await callback.message.answer("Выберите дальнейшее действие:", reply_markup=keyboard)
         
         logger.info(f"Файл скачан: {filename} пользователем {callback.from_user.id}")
         
@@ -543,87 +453,128 @@ async def download_report(callback: types.CallbackQuery):
         await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
 
 
-# Обработчик просмотра отчетов (старый)
-@dp.callback_query(F.data == "view_reports")
-async def process_view_reports(callback: types.CallbackQuery, state: FSMContext):
+# Меню скачивания отчетов
+@dp.callback_query(F.data == "download_menu")
+async def download_menu(callback: types.CallbackQuery):
+    """Меню скачивания отчетов"""
+    stats = get_reports_statistics()
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 JSON отчеты", callback_data="list_json")],
-        [InlineKeyboardButton(text="📝 TXT отчеты", callback_data="list_txt")],
-        [InlineKeyboardButton(text="🏠 Назад", callback_data="back_to_menu")]
+        [InlineKeyboardButton(text=f"📊 JSON ({stats['json']['total']})", callback_data="list_json")],
+        [InlineKeyboardButton(text=f"📝 TXT ({stats['txt']['total']})", callback_data="list_txt")],
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="search_reports")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_menu")]
     ])
     
     await callback.message.edit_text(
-        "📥 *Меню скачивания отчетов*\n\n"
-        "Выберите формат отчета:",
+        f"📥 *Меню отчетов*\n\n"
+        f"📊 JSON: {stats['json']['total']} файлов | {stats['json']['total_size_mb']:.1f} MB\n"
+        f"📝 TXT: {stats['txt']['total']} файлов | {stats['txt']['total_size_kb']:.0f} KB\n\n"
+        f"Выберите формат:",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
     await callback.answer()
 
 
-
-# Стартовое меню
-@dp.callback_query(F.data == "start_menu")
-async def process_start_menu(callback: types.CallbackQuery):
-    keyboard = get_main_keyboard()
+# Поиск по отчетам
+@dp.callback_query(F.data == "search_reports")
+async def search_reports_prompt(callback: types.CallbackQuery):
+    """Запрос на ввод поискового запроса"""
+    keyboard = get_back_keyboard()
     await callback.message.answer(
-        "🏠 *Главное меню*",
+        "🔍 *Поиск по отчетам*\n\n"
+        "Введите текст для поиска в отчетах:\n"
+        "(например: 'XSS', 'critical', 'subdomain', 'example.com')",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
     await callback.answer()
 
 
-# Кнопка "Назад" в главное меню
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    keyboard = get_main_keyboard()
-    await callback.message.edit_text(
-        "🏠 *Главное меню*\n\n"
-        "Выберите действие:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[])  # Очищаем inline кнопки
-    )
+# Команда поиска
+@dp.message(Command("search"))
+async def cmd_search(message: Message):
+    """Поиск по отчетам"""
+    query = message.text.replace("/search", "").strip()
     
-    # Отправляем новое сообщение с клавиатурой
-    await callback.message.answer(
-        "🏠 *Главное меню*\n\n"
-        "Выберите действие:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    await callback.answer()
-
-
-# Справка через callback
-@dp.callback_query(F.data == "help_info")
-async def process_help_callback(callback: types.CallbackQuery):
-    help_text = """
-📋 *Доступные команды:*
-
-/start - главное меню
-/help - справка
-/scan - быстрое сканирование
-/list_json - список JSON отчетов
-/list_txt - список TXT отчетов
-/cancel - отмена операции
-
-*Функциональность:*
-🔍 Запуск сканирования через API
-📥 Скачивание отчетов (JSON, TXT)
-📊 Просмотр доступных отчетов
-
-*Отчеты:*
-Отчеты автоматически ищутся в папке:
-`reports/combined/json/` - JSON отчеты
-`reports/combined/txt/` - TXT отчеты
-    """
+    if not query:
+        await message.answer("❌ Введите текст для поиска. Пример: `/search XSS`", parse_mode="Markdown")
+        return
+    
+    await message.answer(f"🔍 Ищу `{query}` в отчетах...", parse_mode="Markdown")
+    
+    results = []
+    query_lower = query.lower()
+    
+    # Поиск в JSON файлах
+    json_dir = REPORTS_DIR / "json"
+    if json_dir.exists():
+        for file in json_dir.glob("*.json"):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if query_lower in content.lower():
+                        # Подсчитываем количество вхождений
+                        count = content.lower().count(query_lower)
+                        results.append({
+                            "name": file.name,
+                            "type": "json",
+                            "count": count,
+                            "size": file.stat().st_size / (1024 * 1024)
+                        })
+            except Exception as e:
+                logger.error(f"Ошибка при поиске в {file}: {e}")
+    
+    # Поиск в TXT файлах
+    txt_dir = REPORTS_DIR / "txt"
+    if txt_dir.exists():
+        for file in txt_dir.glob("*.txt"):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if query_lower in content.lower():
+                        count = content.lower().count(query_lower)
+                        results.append({
+                            "name": file.name,
+                            "type": "txt",
+                            "count": count,
+                            "size": file.stat().st_size / 1024
+                        })
+            except Exception as e:
+                logger.error(f"Ошибка при поиске в {file}: {e}")
+    
+    if not results:
+        await message.answer(f"❌ Ничего не найдено по запросу `{query}`", parse_mode="Markdown")
+        return
+    
+    # Сортируем по количеству вхождений
+    results.sort(key=lambda x: x["count"], reverse=True)
+    
+    result_text = f"🔍 *Результаты поиска: '{query}'*\n\n"
+    result_text += f"📊 Найдено в {len(results)} файлах:\n\n"
+    
+    for i, res in enumerate(results[:10], 1):
+        size_info = f"{res['size']:.1f}MB" if res['type'] == 'json' else f"{res['size']:.0f}KB"
+        result_text += f"{i}. `{res['name'][:50]}`\n"
+        result_text += f"   📁 Тип: {res['type'].upper()} | 📦 {size_info} | 🔥 {res['count']} совпад.\n"
+    
+    if len(results) > 10:
+        result_text += f"\n... и еще {len(results) - 10} файлов"
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="start_menu")]
+        [InlineKeyboardButton(text="📥 Скачать найденные", callback_data=f"download_search_{query}")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_menu")]
     ])
     
-    await callback.message.edit_text(help_text, reply_markup=keyboard, parse_mode="Markdown")
-    await callback.answer()
+    await message.answer(result_text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+# Команда статистики
+@dp.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Команда для быстрой статистики"""
+    await handle_stats_button(message)
 
 
 # Команда для быстрого списка JSON отчетов
@@ -640,7 +591,8 @@ async def cmd_list_json(message: Message):
     for i, filename in enumerate(json_files[:20], 1):
         file_path = REPORTS_DIR / "json" / filename
         size_mb = file_path.stat().st_size / (1024 * 1024)
-        text += f"{i}. `{filename}` ({size_mb:.2f} MB)\n"
+        mtime = datetime.fromtimestamp(file_path.stat().st_mtime).strftime("%Y-%m-%d")
+        text += f"{i}. `{filename}` ({size_mb:.2f} MB) - {mtime}\n"
     
     await message.answer(text, parse_mode="Markdown")
 
@@ -659,23 +611,40 @@ async def cmd_list_txt(message: Message):
     for i, filename in enumerate(txt_files[:20], 1):
         file_path = REPORTS_DIR / "txt" / filename
         size_kb = file_path.stat().st_size / 1024
-        text += f"{i}. `{filename}` ({size_kb:.1f} KB)\n"
+        mtime = datetime.fromtimestamp(file_path.stat().st_mtime).strftime("%Y-%m-%d")
+        text += f"{i}. `{filename}` ({size_kb:.1f} KB) - {mtime}\n"
     
     await message.answer(text, parse_mode="Markdown")
 
 
+# Кнопка "Назад" в главное меню
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback: types.CallbackQuery):
+    """Возврат в главное меню"""
+    keyboard = get_main_keyboard()
+    
+    # Отвечаем на callback и отправляем новое сообщение
+    await callback.answer()
+    await callback.message.answer(
+        "🏠 *Главное меню*\n\nВыберите действие:",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+
+
 @dp.error()
-async def error_handler(update: types.Update):
-    logger.error(f"Произошла ошибка при обработке update")
+async def error_handler(update: types.Update, exception: Exception):
+    """Глобальный обработчик ошибок"""
+    logger.error(f"Произошла ошибка: {exception}")
     return True
+
 
 # Запуск бота
 async def main():
     print("=" * 50)
-    print("🤖 Бот CyberScope запущен")
+    print("🤖 Бот CyberScope (режим аналитики) запущен")
     print("=" * 50)
     print(f"📁 Папка отчетов: {REPORTS_DIR}")
-    print(f"API Base URL: {API_BASE_URL}")
     
     # Проверяем наличие папки отчетов
     if REPORTS_DIR.exists():
@@ -683,6 +652,7 @@ async def main():
         txt_count = len(list((REPORTS_DIR / "txt").glob("*"))) if (REPORTS_DIR / "txt").exists() else 0
         print(f"📊 Найдено отчетов JSON: {json_count}")
         print(f"📝 Найдено отчетов TXT: {txt_count}")
+        print(f"💾 Общий размер: ~{sum(f.stat().st_size for f in (REPORTS_DIR / 'json').glob('*')) / (1024*1024):.1f} MB")
     else:
         print(f"⚠️ Папка отчетов не найдена: {REPORTS_DIR}")
     

@@ -5,7 +5,12 @@ from .database import SessionLocal, engine
 from . import models, schemas, auth
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-models.Base.metadata.create_all(bind=engine)
+try:
+    models.Base.metadata.create_all(bind=engine)
+    print(f"База данных успешно инициализирована. URL: {engine.url}")
+except Exception as e:
+    print(f"Ошибка подключения к базе данных: {e}")
+    raise
 
 app = FastAPI()
 

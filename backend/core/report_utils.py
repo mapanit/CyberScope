@@ -233,7 +233,7 @@ class CombinedReport:
 
         # Список инструментов для сбора
         tools = ['wappalyzer', 'scanner', 'nuclei',
-                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
+                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap']
 
         collected_files = {}
 
@@ -304,7 +304,7 @@ class CombinedReport:
         try:
             # Порядок инструментов для объединения
             tool_order = ['wappalyzer', 'scanner', 'nuclei',
-                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
+                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap']
 
             # Заголовок объединенного отчета
             with open(output_path, 'w', encoding='utf-8') as output_file:

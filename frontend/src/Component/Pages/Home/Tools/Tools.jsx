@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 
+
 const Tools = ({ setActiveTools, activeTools }) => {
   const [tooltipOpen, setTooltipOpen] = useState(null);
 
@@ -17,8 +18,9 @@ const Tools = ({ setActiveTools, activeTools }) => {
     { id: "retire", label: "Retire", info: "Сканирование JavaScript библиотек на наличие уязвимостей" },
     { id: "cors", label: "CORS", info: "Проверка конфигурации CORS на наличие уязвимостей" },
     { id: "web", label: "Web", info: "Сканирование инструментов для веб-разведки" },
-    
+
     { id: "nuclei", label: "Nuclei", info: "Быстрое сканирование на основе YAML шаблонов для выявления CVE" },
+
   ];
 
   const handleToolClick = (toolId) => {
@@ -28,6 +30,7 @@ const Tools = ({ setActiveTools, activeTools }) => {
       setActiveTools([...activeTools, toolId]);
     }
   };
+
 
   return (
     <div className="menu__active">
