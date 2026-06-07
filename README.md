@@ -135,7 +135,7 @@ python backend/bot/bot.py
 SQLALCHEMY_DATABASE_URL=sqlite:///./CyberScope.db
 
 # Вариант 2: PostgreSQL (для продакшена)
-# SQLALCHEMY_DATABASE_URL=postgresql://postgres:password@localhost:5432/db_cs
+SQLALCHEMY_DATABASE_URL=postgresql://postgres:password@localhost:5432/db_cs
 
 Помощник posgresql в pl.txt 
 
