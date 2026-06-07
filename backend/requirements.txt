@@ -24,3 +24,6 @@ sqlalchemy
 passlib[bcrypt]
 python-jose[cryptography]
 python-multipart
+aiofiles
+asyncio-contextmanager
+psycopg2

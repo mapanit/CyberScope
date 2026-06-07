@@ -2,7 +2,8 @@
 
 Автоматизированная веб-платформа для комплексного анализа безопасности веб-ресурсов. Объединяет множество инструментов пентеста в едином интерфейсе с поддержкой отчётов JSON, TXT и DOCX.
 
-<video src="cb.gif" controls="controls" style="max-width: 100%;"></video>
+<video src="./cs.mp4" controls="controls" style="max-width: 100%;"></video>
+=======
 
 ![CyberScope Interface](image.png)
 
@@ -23,6 +24,15 @@
 - Студентов и исследователей в области кибербезопасности
 
 ## 📋 Возможности и сканеры
+
+### 🔍 Сканирование веб-приложений
+
+- **XSS (Cross-Site Scripting)** - обнаружение межсайтового скриптинга
+- **SQL Injection** - поиск SQL-инъекций
+- **XXE Injection** - обнаружение XML внешних сущностей
+- **CSS Injection** - выявление CSS-инъекций
+- **Security Headers** - проверка заголовков безопасности (CSP, HSTS, X-Frame-Options и др.)
+- **Sensitive Files** - поиск чувствительных файлов (`.env`, `.git`, конфиги)
 
 ### 🔍 Модули сканирования
 
@@ -117,6 +127,18 @@ export TELEGRAM_BOT_TOKEN="ваш_токен"
 python backend/bot/bot.py
 ```
 
+### Настройка env
+
+Создайте файл .env в корневой директории backend:
+
+# Вариант 1: SQLite (для разработки)
+SQLALCHEMY_DATABASE_URL=sqlite:///./CyberScope.db
+
+# Вариант 2: PostgreSQL (для продакшена)
+SQLALCHEMY_DATABASE_URL=postgresql://postgres:password@localhost:5432/db_cs
+
+Помощник posgresql в pl.txt 
+
 ## 🏗️ Архитектура
 
 ```
@@ -158,7 +180,7 @@ CyberScope/
 - FastAPI — асинхронный веб-фреймворк
 - SQLAlchemy — ORM для работы с БД
 - APScheduler — планировщик фоновых задач
-- python-telegram-bot — интеграция с Telegram
+- aiogram — интеграция с Telegram
 - python-docx — генерация Word документов
 - pydantic — валидация данных
 
@@ -190,16 +212,6 @@ CyberScope/
 5. Дождитесь завершения (5-30 минут в зависимости от размера)
 6. Экспортируйте результаты в нужном формате
 
-### Запуск сканирования через API
-
-```bash
-curl -X POST http://localhost:8000/api/scan \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://example.com",
-    "scanners": ["nmap", "nuclei", "wappalyzer", "ssl"]
-  }'
-```
 
 ## 🔐 Безопасность
 
@@ -234,18 +246,9 @@ lsof -i :3000    # Frontend
 kill -9 <PID>
 ```
 
-
-## 📚 Дополнительные ресурсы
-
-- [FastAPI документация](https://fastapi.tiangolo.com/)
-- [React документация](https://react.dev/)
-- [Nmap документация](https://nmap.org/book/man.html)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [CWE Top 25](https://cwe.mitre.org/top25/)
-
 ## 📊 Статистика проекта
 
-- **Поддерживаемых сканеров:** 9+
+- **Поддерживаемых сканеров:** 11+
 - **Форматов экспорта:** 3 (JSON, TXT, DOCX)
 - **Строк кода (Backend):** ~5000+
 - **Строк кода (Frontend):** ~3000+
@@ -267,8 +270,5 @@ CyberScope распространяется под лицензией **MIT** и
 - Удаление логов о работе инструмента
 - Распространение без лицензии
 
-**Используйте ответственно! ⚡**
 
-**Версия:** 1.0.0  
-**Последнее обновление:** Апрель 2026  
-**Статус:** В активной разработке 🚀
+**Используйте ответственно! ⚡**

@@ -233,7 +233,7 @@ class CombinedReport:
 
         # Список инструментов для сбора
         tools = ['wappalyzer', 'scanner', 'nuclei',
-                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
+                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap']
 
         collected_files = {}
 
@@ -304,25 +304,25 @@ class CombinedReport:
         try:
             # Порядок инструментов для объединения
             tool_order = ['wappalyzer', 'scanner', 'nuclei',
-                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
+                          'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap']
 
             # Заголовок объединенного отчета
             with open(output_path, 'w', encoding='utf-8') as output_file:
                 # Пишем заголовок
                 header = f"""
-╔{'═' * 78}╗
-║{'ОБЪЕДИНЕННЫЙ ОТЧЕТ О СКАНИРОВАНИИ'.center(78)}║
-╚{'═' * 78}╝
+                ╔{'═' * 78}╗
+                ║{'ОБЪЕДИНЕННЫЙ ОТЧЕТ О СКАНИРОВАНИИ'.center(78)}║
+                ╚{'═' * 78}╝
 
-📋 ИНФОРМАЦИЯ О СКАНИРОВАНИИ
-{'─' * 80}
-  ID сканирования:      {self.scan_id}
-  Дата создания:        {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
-  Использовано инструментов: {len(self.tool_files)}
+                📋 ИНФОРМАЦИЯ О СКАНИРОВАНИИ
+                {'─' * 80}
+                ID сканирования:      {self.scan_id}
+                Дата создания:        {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}
+                Использовано инструментов: {len(self.tool_files)}
 
-{'═' * 80}
+                {'═' * 80}
 
-"""
+                """
                 output_file.write(header)
 
                 # Объединяем файлы

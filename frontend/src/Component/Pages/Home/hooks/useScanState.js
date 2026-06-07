@@ -11,7 +11,7 @@ export const useScanState = () => {
     const [scanAborted, setScanAborted] = useState(false);
     const [allowInternal, setAllowInternal] = useState(true);
     const [expandedJsonTools, setExpandedJsonTools] = useState({});
-    
+    const [localPath, setLocalPath] = useState("");
     // Refs для управления отменой запросов
     const abortControllerRef = useRef(null);
     const readerRefs = useRef({});
@@ -46,6 +46,8 @@ export const useScanState = () => {
         allowInternal, setAllowInternal,
         expandedJsonTools, setExpandedJsonTools,
         abortControllerRef, readerRefs,
-        abortAllRequests, cancelScan
+        abortAllRequests, cancelScan,
+        localPath,
+  setLocalPath,
     };
 };

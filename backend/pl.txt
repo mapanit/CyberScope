@@ -1,0 +1,16 @@
+Создаем директорий данных и системные таблицы
+
+sudo -u postgres initdb --locale $LANG -E UTF8 -D '/var/lib/postgres/data'
+
+sudo systemctl start postgresql
+sudo -u postgres psql
+
+-- Создание пользователя
+CREATE USER admin WITH PASSWORD 'admin';
+-- Создание базы данных с владельцем
+CREATE DATABASE db_cs OWNER admin;
+
+-- Выход из psql
+\q
+
+psql -h localhost -U admin -d db_cs -W

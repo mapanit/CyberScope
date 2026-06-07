@@ -11,6 +11,12 @@ import signal
 from pathlib import Path
 from core.report_utils import ReportBase
 
+# Импорт конфигурации сканеров
+try:
+    from scanner_config import get_amass_profile
+except ImportError:
+    get_amass_profile = None
+
 class OsintTextReport:
     """Класс для создания единого текстового отчета OSINT"""
     
@@ -434,7 +440,7 @@ def save_combined_json_report(domain: str, reports_base_dir: Path,
     print(f"[+] Комбинированный JSON отчет сохранен: {combined_json_path}")
     return str(combined_json_path)
 
-def simple_scan(domain: str, reports_base_dir: Path = None) -> dict:
+def simple_scan(domain: str, reports_base_dir: Path = None, amass_profile: str = "standard_passive") -> dict:
     """
     Функция для OSINT сканирования домена
     Создает единый TXT отчет и JSON отчеты по всем инструментам
@@ -442,6 +448,7 @@ def simple_scan(domain: str, reports_base_dir: Path = None) -> dict:
     Args:
         domain: Целевой домен
         reports_base_dir: Базовая директория для отчетов
+        amass_profile: Профиль Amass (quick_passive, standard_passive, active_scan, aggressive)
     
     Returns:
         Dict с результатами и путями к отчетам
@@ -452,7 +459,17 @@ def simple_scan(domain: str, reports_base_dir: Path = None) -> dict:
     osint_dir = reports_base / "osint"
     osint_dir.mkdir(parents=True, exist_ok=True)
     
-    print(f"\n[*] Запускаю OSINT сканирование для {domain}")
+    # Получаем параметры Amass из профиля
+    amass_timeout = 300
+    if get_amass_profile:
+        try:
+            profile = get_amass_profile(amass_profile)
+            amass_timeout = profile.timeout
+            print(f"[+] Используется профиль Amass: {profile.name} (режим: {profile.mode}, таймаут: {amass_timeout}s)")
+        except Exception as e:
+            print(f"[!] Ошибка при загрузке профиля Amass {amass_profile}: {e}. Используем стандартный таймаут.")
+    
+    print(f"\n[*] Запускаю OSINT сканирование для {domain} (профиль: {amass_profile})")
     print("=" * 80)
     
     # Инициализируем отчеты для каждого инструмента

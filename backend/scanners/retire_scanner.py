@@ -13,11 +13,18 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Импорт конфигурации сканеров
+try:
+    from scanner_config import get_retire_profile
+except ImportError:
+    get_retire_profile = None
+
 
 class RetireScanner:
-    def __init__(self, target_url, output_dir="scan_results", reports_dir=None):
+    def __init__(self, target_url, output_dir="scan_results", reports_dir=None, retire_profile="all_except_low"):
         self.target_url = target_url.rstrip('/')
         self.output_dir = output_dir
+        self.retire_profile = retire_profile
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.scan_datetime = datetime.now().isoformat()
         self.scan_start_time = datetime.now()
@@ -529,23 +536,38 @@ class RetireScanner:
         return "\n".join(lines)
 
 
-def simple_scan(target_url, reports_dir=None):
+def simple_scan(target_url, reports_dir=None, retire_profile="all_except_low"):
     """Функция для запуска retire сканирования из API"""
     try:
-        print(f"[*] Запуск Retire сканирования для {target_url}")
+        print(f"[*] Запуск Retire сканирования для {target_url} (профиль: {retire_profile})")
+
+        # Получаем параметры из профиля
+        severity_filter = None
+        include_js = True
+        
+        if get_retire_profile:
+            try:
+                profile = get_retire_profile(retire_profile)
+                severity_filter = profile.severity_filter
+                include_js = profile.include_js
+                print(f"[+] Используется профиль: {profile.name}")
+            except Exception as e:
+                print(f"[!] Ошибка при загрузке профиля {retire_profile}: {e}. Используем стандартные параметры.")
 
         # Создаем сканер
         scanner = RetireScanner(
-            target_url, output_dir="/tmp/retire_scan", reports_dir=reports_dir)
+            target_url, output_dir="/tmp/retire_scan", reports_dir=reports_dir, retire_profile=retire_profile)
 
         # Запускаем сканирование
-        scanner.run_all(include_js=True, severity_filter=None, proxy=None)
+        scanner.run_all(include_js=include_js, severity_filter=severity_filter, proxy=None)
 
         # Возвращаем результаты
         report_result = scanner.generate_report()
         return {
             'status': 'completed',
             'target_url': target_url,
+            'retire_profile': retire_profile,
+            'severity_filter': severity_filter,
             'reports': report_result
         }
 

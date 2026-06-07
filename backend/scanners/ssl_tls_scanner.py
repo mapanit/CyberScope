@@ -70,7 +70,8 @@ class SSLTLSScanner(ReportBase):
                 context.verify_mode = ssl.CERT_NONE
                 
                 with socket.create_connection((self.hostname, self.port), timeout=5) as sock:
-                    with context.wrap_socket(sock, server_hostname=self.hostname) as ssock:
+                    ssock = context.wrap_socket(sock, server_hostname=self.hostname)
+                    try:
                         cipher = ssock.cipher()
                         self.tls_versions[version_name] = {
                             'supported': True,
@@ -94,8 +95,10 @@ class SSLTLSScanner(ReportBase):
                             })
                         
                         print(f"{Fore.GREEN}[+] {version_name}: Поддерживается ({cipher[0] if cipher else 'Unknown'})")
+                    finally:
+                        ssock.close()
                 
-            except (ssl.SSLError, socket.timeout, ConnectionRefusedError, OSError):
+            except (ssl.SSLError, socket.timeout, ConnectionRefusedError, OSError) as e:
                 self.tls_versions[version_name] = {'supported': False}
                 print(f"{Fore.YELLOW}[-] {version_name}: Не поддерживается")
 
@@ -109,7 +112,8 @@ class SSLTLSScanner(ReportBase):
             context.verify_mode = ssl.CERT_NONE
             
             with socket.create_connection((self.hostname, self.port), timeout=10) as sock:
-                with context.wrap_socket(sock, server_hostname=self.hostname) as ssock:
+                ssock = context.wrap_socket(sock, server_hostname=self.hostname)
+                try:
                     cert = ssock.getpeercert()
                     cert_der = ssock.getpeercert(binary_form=True)
                     
@@ -135,6 +139,10 @@ class SSLTLSScanner(ReportBase):
                         print(f"{Fore.GREEN}[+] Сертификат успешно получен")
                         print(f"    Издатель: {self.certificate_info['issuer'].get('organizationName', 'N/A')}")
                         print(f"    Срок действия: {self.certificate_info['notBefore']} - {self.certificate_info['notAfter']}")
+                    else:
+                        print(f"{Fore.YELLOW}[!] Не удалось получить информацию о сертификате")
+                finally:
+                    ssock.close()
                     
         except Exception as e:
             print(f"{Fore.RED}[!] Ошибка при анализе сертификата: {e}")
@@ -202,7 +210,7 @@ class SSLTLSScanner(ReportBase):
 
     def check_cipher_strength(self):
         """Проверка стойкости шифров"""
-        print(f"{Fore.CYAN}[*] Анализ стойкости шифралфавитны...")
+        print(f"{Fore.CYAN}[*] Анализ стойкости шифров...")
         
         # Слабые шифры
         weak_ciphers = [
@@ -216,7 +224,8 @@ class SSLTLSScanner(ReportBase):
             context.verify_mode = ssl.CERT_NONE
             
             with socket.create_connection((self.hostname, self.port), timeout=10) as sock:
-                with context.wrap_socket(sock, server_hostname=self.hostname) as ssock:
+                ssock = context.wrap_socket(sock, server_hostname=self.hostname)
+                try:
                     cipher = ssock.cipher()
                     
                     if cipher:
@@ -251,6 +260,8 @@ class SSLTLSScanner(ReportBase):
                             })
                         elif cipher[2] >= 256:
                             print(f"{Fore.GREEN}[+] Длина ключа: {cipher[2]} бит (Хорошо)")
+                finally:
+                    ssock.close()
         
         except Exception as e:
             print(f"{Fore.YELLOW}[!] Ошибка при проверке шифров: {e}")
@@ -466,7 +477,7 @@ class SSLTLSScanner(ReportBase):
         lines.append("")
         
         # Шифры
-        lines.append("🔑 ШИФРАЛФАВИТЫ")
+        lines.append("🔑 ШИФРЫ (CIPHER SUITES)")
         lines.append("─" * 80)
         if self.cipher_suites:
             for i, cipher in enumerate(self.cipher_suites, 1):
