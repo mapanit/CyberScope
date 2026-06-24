@@ -52,6 +52,11 @@
 - **Retire.js** — поиск устаревших JavaScript библиотек с известными уязвимостями
 - **Vulnerability Scanner** — поиск CVE уязвимостей в зависимостях
 
+**AI Анализ и интеллектуальная обработка:**
+- **LM Studio** — локальный сервер для запуска языковых моделей
+- **Mistral AI (ministral-3-3b)** — компактная LLM для анализа результатов сканирования, выявления паттернов и генерации рекомендаций
+- **Локальный AI анализ** — обработка отчётов без отправки данных в облако
+
 **Дополнительные инструменты:**
 - **JSFinder** — обнаружение JavaScript файлов и API endpoints
 
@@ -80,7 +85,8 @@
 - **Python:** 3.8+
 - **Node.js:** 14+
 - **Docker:** 20.10+ (опционально, для контейнеризации)
-- **Диск:** минимум 2 ГБ для инструментов
+- **Диск:** минимум 4 ГБ для инструментов и моделей LM
+- **RAM:** рекомендуется 8 ГБ+ для работы LM Studio (опционально)
 
 ### Установка локально
 
@@ -117,11 +123,21 @@ docker-compose up
 # Frontend на http://localhost:3000
 ```
 
+### Использование LM Studio (опционально)
+
+```bash
+# 1. Установить LM Studio с https://lmstudio.ai
+# 2. Запустить LM Studio и загрузить модель mistralai/ministral-3-3b
+# 3. Стартовать локальный сервер LM Studio (обычно на http://localhost:1234)
+# 4. В .env файл добавить:
+LM_STUDIO_URL="http://localhost:1234"
+```
+
 ### Использование Telegram-бота
 
 ```bash
 # Установить токен бота в переменные окружения
-export TELEGRAM_BOT_TOKEN="ваш_токен"
+TELEGRAM_BOT_TOKEN="ваш_токен"
 
 # Запустить бота
 python backend/bot/bot.py
@@ -137,7 +153,6 @@ SQLALCHEMY_DATABASE_URL=sqlite:///./CyberScope.db
 # Вариант 2: PostgreSQL (для продакшена)
 SQLALCHEMY_DATABASE_URL=postgresql://postgres:password@localhost:5432/db_cs
 
-Помощник posgresql в pl.txt 
 
 ## 🏗️ Архитектура
 
@@ -196,6 +211,13 @@ CyberScope/
 - Wappalyzer — определение технологий
 - JSFinder — поиск JavaScript файлов
 - Retire.js — проверка устаревших зависимостей
+- LM Studio — локальный сервер для LLM моделей
+- Mistral AI (ministral-3-3b) — компактная и быстрая языковая модель
+
+**AI & LLM:**
+- LM Studio — платформа для запуска локальных LLM
+- Mistral AI (ministral-3-3b) — 3.3B параметров, легковесная и быстрая модель для анализа
+- OpenAI API совместимость — через LM Studio
 
 **DevOps:**
 - Docker — контейнеризация приложения

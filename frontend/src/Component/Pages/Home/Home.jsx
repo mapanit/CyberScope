@@ -4,7 +4,9 @@ import Tools from "./Tools/Tools";
 import SearchForm from "./components/SearchForm";
 import ReportsPanel from "./components/ReportsPanel";
 import ResultsSection from "./components/ResultsSection";
+import ScanningInfo from "./components/ScanningInfo";
 import ReportViewer from "./components/ReportViewer/ReportViewer";
+import AIAnalysis from "./components/AIAnalysis/AIAnalysis";
 import ScheduleScanner from "./ScheduleScanner/ScheduleScanner";
 import Image from "../../../Img/clock.png";
 import { useScanState } from "./hooks/useScanState";
@@ -17,6 +19,11 @@ const Search = ({ language = "ru" }) => {
   const [activeScheduleScanner, setActiveScheduleScanner] = useState(false);
   const [btn, setBtn] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [aiAnalysisOpen, setAIAnalysisOpen] = useState(false);
+  const [aiAnalysisData, setAIAnalysisData] = useState({
+    reportData: null,
+    reportFilePath: null,
+  });
   const [viewerData, setViewerData] = useState({
     filename: "",
     reportType: "",
@@ -144,6 +151,19 @@ const Search = ({ language = "ru" }) => {
   const closeReportViewer = () => {
     setViewerOpen(false);
     setViewerData({ filename: "", reportType: "" });
+  };
+
+  const openAIAnalysis = (reportData, reportFilePath = null) => {
+    setAIAnalysisData({
+      reportData,
+      reportFilePath,
+    });
+    setAIAnalysisOpen(true);
+  };
+
+  const closeAIAnalysis = () => {
+    setAIAnalysisOpen(false);
+    setAIAnalysisData({ reportData: null, reportFilePath: null });
   };
 
   const downloadWordReport = async (filename) => {
@@ -850,19 +870,29 @@ const Search = ({ language = "ru" }) => {
               deleteAllWordReports={deleteAllWordReports}
               clearAllReports={clearAllReports}
               openReportViewer={openReportViewer}
+              openAIAnalysis={openAIAnalysis}
               language={language}
             />
           </div>
 
-          <ResultsSection
-            results={results}
-            scanAborted={scanAborted}
-            expandedJsonTools={expandedJsonTools}
-            setExpandedJsonTools={setExpandedJsonTools}
-            renderScannerResults={renderScannerResults}
-            renderCombinedResults={renderCombinedResults}
-            language={language}
-          />
+          {loading ? (
+            <ScanningInfo
+              activeTools={activeTools}
+              query={query}
+              cancelScan={cancelScan}
+              language={language}
+            />
+          ) : (
+            <ResultsSection
+              results={results}
+              scanAborted={scanAborted}
+              expandedJsonTools={expandedJsonTools}
+              setExpandedJsonTools={setExpandedJsonTools}
+              renderScannerResults={renderScannerResults}
+              renderCombinedResults={renderCombinedResults}
+              language={language}
+            />
+          )}
         </div>
       </div>
 
@@ -871,6 +901,15 @@ const Search = ({ language = "ru" }) => {
           filename={viewerData.filename}
           reportType={viewerData.reportType}
           onClose={closeReportViewer}
+          language={language}
+        />
+      )}
+
+      {aiAnalysisOpen && (
+        <AIAnalysis
+          reportData={aiAnalysisData.reportData}
+          reportFilePath={aiAnalysisData.reportFilePath}
+          onClose={closeAIAnalysis}
           language={language}
         />
       )}

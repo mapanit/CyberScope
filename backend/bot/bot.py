@@ -9,10 +9,21 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+
+# Добавляем импорт для LM Studio (через OpenAI-совместимый API)
+try:
+    from openai import OpenAI
+    LM_STUDIO_AVAILABLE = True
+except ImportError:
+    LM_STUDIO_AVAILABLE = False
+    print("⚠️ openai не установлен. Установите: pip install openai")
 
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+# Для SDK LM Studio используем базовый URL без /v1
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://127.0.0.1:1234")
 
 if os.path.exists("/app/reports/combined"):
     REPORTS_DIR = Path("/app/reports/combined")
@@ -29,6 +40,51 @@ dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Состояния для FSM
+class ChatStates(StatesGroup):
+    ai_chat = State()
+
+# Инициализация LM Studio
+lm_client = None
+lm_model = None
+
+def init_lm_studio():
+    """Инициализация LM Studio"""
+    global lm_client, lm_model
+
+    if not LM_STUDIO_AVAILABLE:
+        logger.warning("openai пакет не доступен")
+        return False
+
+    try:
+        logger.info(f"Подключение к LM Studio по адресу: {LM_STUDIO_URL}")
+
+        # Создаем OpenAI-совместимый клиент для LM Studio
+        lm_client = OpenAI(base_url=f"{LM_STUDIO_URL}/v1", api_key="lm-studio")
+
+        # Проверяем подключение и берем загруженную модель (если есть)
+        try:
+            models = lm_client.models.list()
+            if models.data:
+                lm_model = models.data[0].id
+                logger.info(f"LM Studio: используем модель {lm_model}")
+            else:
+                # Модели не загружены — LM Studio поддерживает just-in-time загрузку.
+                # Передаем model=None; при запросе LM Studio сам подберет модель.
+                lm_model = None
+                logger.warning("LM Studio: модели не загружены, будет использована just-in-time загрузка")
+        except Exception:
+            lm_model = None
+
+        logger.info("LM Studio клиент успешно инициализирован")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка инициализации LM Studio: {e}")
+        return False
+
+
+# Инициализируем LM Studio при запуске
+lm_ready = init_lm_studio()
 
 def get_reports_by_type(report_type: str) -> list:
     """Получить список отчетов по типу (json или txt)"""
@@ -39,7 +95,6 @@ def get_reports_by_type(report_type: str) -> list:
     
     files = sorted(type_dir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True)
     return [f.name for f in files if f.is_file()]
-
 
 def get_reports_statistics() -> dict:
     """Получить подробную статистику по отчетам"""
@@ -104,18 +159,16 @@ def get_reports_statistics() -> dict:
     
     return stats
 
-
 def get_main_keyboard():
     """Получить главную клавиатуру"""
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text='📊 Статистика'), KeyboardButton(text='📥 Отчеты')],
-            [KeyboardButton(text='❓ Справка')]
+            [KeyboardButton(text='🤖 Чат с AI'), KeyboardButton(text='📊 Статистика')],
+            [KeyboardButton(text='📥 Отчеты'), KeyboardButton(text='❓ Справка')]
         ],
         resize_keyboard=True
     )
     return keyboard
-
 
 def get_back_keyboard():
     """Получить клавиатуру возврата в главное меню"""
@@ -127,50 +180,213 @@ def get_back_keyboard():
     )
     return keyboard
 
+def get_chat_keyboard():
+    """Клавиатура для чата с AI"""
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text='🔄 Очистить историю')],
+            [KeyboardButton(text='🏠 Главное меню')]
+        ],
+        resize_keyboard=True
+    )
+    return keyboard
 
 # Обработчик команды /start
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     keyboard = get_main_keyboard()
+    
+    # Проверяем статус LM Studio
+    lm_status = "✅ Доступен" if lm_ready else "❌ Недоступен"
+    
     await message.answer(
         f"Привет, {message.from_user.first_name}! 👋\n\n"
-        "Я CyberScope бот для просмотра и анализа отчетов безопасности.\n\n"
+        "Я CyberScope бот для просмотра и анализа отчетов безопасности с AI-помощником.\n\n"
         "*Возможности:*\n"
+        "🤖 Чат с AI (LM Studio)\n"
         "📊 Просмотр статистики отчетов\n"
         "📥 Скачивание отчетов (JSON, TXT)\n"
         "📈 Аналитика по уязвимостям\n"
-        "🔍 Поиск по отчетам\n",
+        "🔍 Поиск по отчетам\n\n"
+        f"*Статус AI:* {lm_status}",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
 
+# Обработчик команды /lmstatus
+@dp.message(Command("lmstatus"))
+async def cmd_lm_status(message: Message):
+    """Проверка статуса LM Studio"""
+    if lm_ready:
+        status_text = (
+            "✅ *LM Studio подключен*\n\n"
+            f"📍 URL: {LM_STUDIO_URL}\n"
+            "📊 Статус: Активен\n"
+            "🤖 Модель: Загружена\n\n"
+            "💡 Для общения с AI нажмите кнопку '🤖 Чат с AI'"
+        )
+    else:
+        status_text = (
+            "❌ *LM Studio не подключен*\n\n"
+            f"📍 URL: {LM_STUDIO_URL}\n"
+            "📊 Статус: Недоступен\n\n"
+            "*Проверьте:*\n"
+            "1. Запущен ли LM Studio\n"
+            "2. Правильный ли URL (должен быть http://127.0.0.1:1234)\n"
+            "3. Загружена ли модель в LM Studio\n"
+            "4. Установлен ли пакет: `pip install lmstudio`\n\n"
+            "📌 *Инструкция:*\n"
+            "- Откройте LM Studio\n"
+            "- Перейдите во вкладку 'Developer'\n"
+            "- Нажмите 'Start' для запуска сервера\n"
+            "- Загрузите модель во вкладке 'Discover'"
+        )
+    
+    await message.answer(status_text, parse_mode="Markdown")
 
-# Обработчик команды /help
-@dp.message(Command("help"))
-async def cmd_help(message: Message):
-    help_text = """
-📋 *Доступные команды:*
+# Обработчик кнопки "🤖 Чат с AI"
+@dp.message(F.text == "🤖 Чат с AI")
+async def handle_ai_chat_start(message: Message, state: FSMContext):
+    """Начать чат с AI"""
+    if not lm_ready:
+        await message.answer(
+            "❌ *AI помощник недоступен*\n\n"
+            "Проверьте, что:\n"
+            "1. Установлен LM Studio: `pip install lmstudio`\n"
+            "2. Запущен сервер LM Studio (вкладка Developer → Start)\n"
+            "3. Загружена модель в LM Studio\n\n"
+            "Для проверки статуса используйте команду `/lmstatus`\n"
+            "После настройки перезапустите бота.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Создаем новый чат для пользователя
+    await state.set_state(ChatStates.ai_chat)
+    await state.update_data(chat_history=[])
+    
+    keyboard = get_chat_keyboard()
+    
+    await message.answer(
+        "🤖 *Чат с AI помощником*\n\n"
+        "Задайте любой вопрос, и я отвечу с помощью AI.\n"
+        "Я специализируюсь на кибербезопасности, но могу помочь и с другими вопросами.\n\n"
+        "💡 *Совет:* Для получения наилучших результатов формулируйте вопросы четко.\n"
+        "🔄 Используйте кнопку 'Очистить историю', чтобы начать новый диалог.\n"
+        "🏠 Для выхода в главное меню нажмите соответствующую кнопку.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
 
-/start - главное меню
-/stats - статистика отчетов
-/search <текст> - поиск по отчетам
-/list_json - список JSON отчетов
-/list_txt - список TXT отчетов
+# Обработка сообщений в режиме чата с AI
+@dp.message(ChatStates.ai_chat)
+async def handle_ai_chat(message: Message, state: FSMContext):
+    """Обработка сообщений в чате с AI"""
+    # Проверка на системные команды
+    if message.text == "🔄 Очистить историю":
+        await state.update_data(chat_history=[])
+        await message.answer(
+            "🔄 *История диалога очищена*\n\n"
+            "Теперь вы можете начать новый диалог.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    if message.text == "🏠 Главное меню":
+        await state.clear()
+        keyboard = get_main_keyboard()
+        await message.answer(
+            "🏠 *Главное меню*\n\nВыберите действие:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        return
+    
+    # Отправляем статус "печатает"
+    await bot.send_chat_action(message.chat.id, "typing")
+    
+    try:
+        # Получаем историю чата
+        data = await state.get_data()
+        chat_history = data.get("chat_history", [])
+        
+        # Добавляем сообщение в историю
+        user_msg = message.text
+        chat_history.append({"role": "user", "content": user_msg})
+        
+        # Если история слишком длинная, ограничиваем
+        if len(chat_history) > 20:
+            chat_history = chat_history[-20:]
+        
+        # Формируем системный промпт
+        system_prompt = (
+            "Ты — полезный, дружелюбный и профессиональный ИИ-ассистент. "
+            "Ты помогаешь с вопросами по кибербезопасности, анализу отчетов и общим вопросам. "
+            "Отвечай кратко и по делу, но будь вежливым."
+        )
+        
+        # Используем глобальные переменные клиента и модели
+        global lm_client, lm_model
 
-*Функциональность:*
-📊 Просмотр статистики отчетов
-📥 Скачивание отчетов (JSON, TXT)
-📈 Аналитика по найденным уязвимостям
-🔍 Поиск по содержимому отчетов
+        # Если модель не определена при старте — пробуем получить актуальный список
+        if lm_model is None:
+            try:
+                models = lm_client.models.list()
+                if models.data:
+                    lm_model = models.data[0].id
+            except Exception:
+                pass
 
-*Отчеты:*
-Отчеты автоматически ищутся в папке:
-`reports/combined/json/` - JSON отчеты
-`reports/combined/txt/` - TXT отчеты
-    """
-    keyboard = get_main_keyboard()
-    await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
+        # "auto" — LM Studio сам выберет/загрузит модель (just-in-time)
+        model_to_use = lm_model if lm_model else "auto"
 
+        # Формируем список сообщений для API
+        messages_for_api = [{"role": "system", "content": system_prompt}]
+        for msg in chat_history:
+            messages_for_api.append({"role": msg["role"], "content": msg["content"]})
+
+        # Получаем ответ через OpenAI-совместимый API
+        completion = lm_client.chat.completions.create(
+            model=model_to_use,
+            messages=messages_for_api,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        # Безопасное извлечение ответа
+        choice = completion.choices[0] if completion.choices else None
+        response = None
+        if choice:
+            response = choice.message.content
+            # DeepSeek R1 и reasoning-модели могут класть ответ в reasoning_content
+            if not response:
+                rc = getattr(choice.message, 'reasoning_content', None)
+                if rc:
+                    response = rc
+
+        if not response:
+            logger.warning(f"Пустой ответ от модели. finish_reason={choice.finish_reason if choice else 'N/A'}")
+            response = "⚠️ Модель вернула пустой ответ. Попробуйте переформулировать вопрос."
+
+        # Добавляем ответ в историю
+        chat_history.append({"role": "assistant", "content": response})
+        await state.update_data(chat_history=chat_history)
+        
+        # Отправляем ответ
+        keyboard = get_chat_keyboard()
+        await message.answer(
+            f"🤖 *AI:* {response}",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка в AI чате: {e}")
+        await message.answer(
+            f"❌ *Произошла ошибка*\n\n"
+            f"Текст ошибки: {str(e)}\n\n"
+            "Пожалуйста, попробуйте еще раз или очистите историю чата.",
+            parse_mode="Markdown"
+        )
 
 # Обработчик кнопки "📊 Статистика"
 @dp.message(F.text == "📊 Статистика")
@@ -221,7 +437,6 @@ async def handle_stats_button(message: Message):
     
     await message.answer(stats_text, reply_markup=keyboard, parse_mode="Markdown")
 
-
 # Обработчик кнопки "📥 Отчеты"
 @dp.message(F.text == "📥 Отчеты")
 async def handle_reports_button(message: Message):
@@ -243,9 +458,6 @@ async def handle_reports_button(message: Message):
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-
-
-#
 
 # Детальная статистика по callback
 @dp.callback_query(F.data == "detailed_stats")
@@ -279,7 +491,6 @@ async def detailed_stats(callback: types.CallbackQuery):
     await callback.message.edit_text(stats_text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
-
 # Обновление статистики
 @dp.callback_query(F.data == "refresh_stats")
 async def refresh_stats(callback: types.CallbackQuery):
@@ -287,14 +498,12 @@ async def refresh_stats(callback: types.CallbackQuery):
     await callback.answer("🔄 Статистика обновлена")
     await handle_stats_button(callback.message)
 
-
 # Назад к статистике
 @dp.callback_query(F.data == "back_to_stats")
 async def back_to_stats(callback: types.CallbackQuery):
     """Вернуться к статистике"""
     await handle_stats_button(callback.message)
     await callback.answer()
-
 
 # Обработчик кнопки "❓ Справка"
 @dp.message(F.text == "❓ Справка")
@@ -308,8 +517,10 @@ async def handle_help_button(message: Message):
 /search <текст> - поиск по отчетам
 /list_json - список JSON отчетов
 /list_txt - список TXT отчетов
+/lmstatus - статус LM Studio
 
 *Функциональность:*
+🤖 Чат с AI помощником (LM Studio)
 📊 Просмотр статистики отчетов
 📥 Скачивание отчетов (JSON, TXT)
 🔍 Поиск по содержимому отчетов
@@ -318,11 +529,20 @@ async def handle_help_button(message: Message):
 Отчеты автоматически ищутся в папке:
 `reports/combined/json/` - JSON отчеты
 `reports/combined/txt/` - TXT отчеты
+
+*AI помощник:*
+Для общения с AI нажмите кнопку "🤖 Чат с AI"
+Используйте кнопку "🔄 Очистить историю" для нового диалога
+
+*Настройка LM Studio:*
+1. Установите: pip install lmstudio
+2. Запустите LM Studio
+3. Во вкладке Developer включите сервер (Start)
+4. Загрузите модель во вкладке Discover
     """
     
     keyboard = get_main_keyboard()
     await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
-
 
 # Обработчик кнопки "🏠 Главное меню"
 @dp.message(F.text == "🏠 Главное меню")
@@ -336,7 +556,6 @@ async def handle_main_menu_button(message: Message, state: FSMContext):
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
-
 
 # Список JSON отчетов
 @dp.callback_query(F.data == "list_json")
@@ -374,7 +593,6 @@ async def list_json_reports(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-
 # Список TXT отчетов
 @dp.callback_query(F.data == "list_txt")
 async def list_txt_reports(callback: types.CallbackQuery):
@@ -409,7 +627,6 @@ async def list_txt_reports(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     await callback.answer()
-
 
 # Скачивание отчетов
 @dp.callback_query(F.data.startswith("dl_json_") | F.data.startswith("dl_txt_"))
@@ -452,7 +669,6 @@ async def download_report(callback: types.CallbackQuery):
         logger.error(f"Ошибка при скачивании файла: {e}")
         await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
 
-
 # Меню скачивания отчетов
 @dp.callback_query(F.data == "download_menu")
 async def download_menu(callback: types.CallbackQuery):
@@ -476,7 +692,6 @@ async def download_menu(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-
 # Поиск по отчетам
 @dp.callback_query(F.data == "search_reports")
 async def search_reports_prompt(callback: types.CallbackQuery):
@@ -490,7 +705,6 @@ async def search_reports_prompt(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
     await callback.answer()
-
 
 # Команда поиска
 @dp.message(Command("search"))
@@ -569,13 +783,11 @@ async def cmd_search(message: Message):
     
     await message.answer(result_text, reply_markup=keyboard, parse_mode="Markdown")
 
-
 # Команда статистики
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     """Команда для быстрой статистики"""
     await handle_stats_button(message)
-
 
 # Команда для быстрого списка JSON отчетов
 @dp.message(Command("list_json"))
@@ -596,7 +808,6 @@ async def cmd_list_json(message: Message):
     
     await message.answer(text, parse_mode="Markdown")
 
-
 # Команда для быстрого списка TXT отчетов
 @dp.message(Command("list_txt"))
 async def cmd_list_txt(message: Message):
@@ -616,7 +827,6 @@ async def cmd_list_txt(message: Message):
     
     await message.answer(text, parse_mode="Markdown")
 
-
 # Кнопка "Назад" в главное меню
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback: types.CallbackQuery):
@@ -631,13 +841,11 @@ async def back_to_menu(callback: types.CallbackQuery):
         parse_mode="Markdown"
     )
 
-
 @dp.error()
 async def error_handler(update: types.Update, exception: Exception):
     """Глобальный обработчик ошибок"""
     logger.error(f"Произошла ошибка: {exception}")
     return True
-
 
 # Запуск бота
 async def main():
@@ -656,6 +864,24 @@ async def main():
     else:
         print(f"⚠️ Папка отчетов не найдена: {REPORTS_DIR}")
     
+    # Проверяем статус LM Studio
+    print("=" * 50)
+    if lm_ready:
+        print(f"✅ LM Studio подключен и готов к работе")
+        print(f"📍 URL: {LM_STUDIO_URL}")
+    else:
+        print("❌ LM Studio не доступен")
+        print("   Проверьте:")
+        print("   1. Установлен пакет: pip install lmstudio")
+        print("   2. Запущен сервер LM Studio (Developer → Start)")
+        print("   3. Загружена модель в LM Studio")
+        print(f"   4. Правильный URL: {LM_STUDIO_URL}")
+        print("\n   📌 Инструкция по настройке:")
+        print("   - Откройте LM Studio")
+        print("   - Перейдите во вкладку 'Developer'")
+        print("   - Нажмите 'Start' для запуска сервера")
+        print("   - Загрузите модель во вкладке 'Discover'")
+    
     print("=" * 50)
     print("⏳ Ожидание сообщений...")
     print("=" * 50)
@@ -667,7 +893,6 @@ async def main():
         print(f"❌ Ошибка подключения: {e}")
     finally:
         await bot.session.close()
-
 
 if __name__ == "__main__":
     try:

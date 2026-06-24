@@ -128,6 +128,7 @@ class CombinedReport:
         self.tool_reports = {}
         self.targets = set()
         self.tool_files = {}  # Хранит пути к файлам каждого инструмента
+        self.reports_base_dir = reports_base_dir  # Сохраняем для использования в других методах
         self.scan_start_time = None  # Время начала текущего сканирования
 
     def set_scan_start_time(self, start_time: datetime):
@@ -209,6 +210,8 @@ class CombinedReport:
                                 f"[*] Найден недавний отчет {tool_name}: {latest_file.name}")
 
         self.tool_files = collected_files
+        # Загружаем JSON отчеты для каждого инструмента
+        self._load_json_reports(reports_base_dir)
         return collected_files
 
     def collect_recent_files(self, reports_base_dir: Optional[Path] = None,
@@ -274,7 +277,47 @@ class CombinedReport:
                                 f"[*] Найден отчет {tool_name} (создан {recent_minutes}+ минут назад): {latest_file.name}")
 
         self.tool_files = collected_files
+        # Загружаем JSON отчеты для каждого инструмента
+        self._load_json_reports(reports_base_dir)
         return collected_files
+
+    def _load_json_reports(self, reports_base_dir: Optional[Path] = None) -> None:
+        """
+        Загрузить JSON отчеты для каждого собранного инструмента
+        
+        Args:
+            reports_base_dir: Базовая директория для отчетов
+        """
+        if reports_base_dir is None:
+            reports_base_dir = self.reports_base_dir
+        
+        if reports_base_dir is None:
+            reports_base_dir = Path(__file__).parent.parent.parent / "backend" / "reports"
+        
+        reports_base_dir = Path(reports_base_dir)
+        self.tool_reports = {}
+        
+        for tool_name in self.tool_files.keys():
+            json_dir = reports_base_dir / tool_name / "json"
+            
+            if json_dir.exists() and json_dir.is_dir():
+                # Получаем все JSON файлы в директории
+                json_files = list(json_dir.glob("*.json"))
+                
+                if json_files:
+                    # Берем самый свежий JSON файл
+                    latest_json = max(json_files, key=lambda p: p.stat().st_mtime)
+                    
+                    try:
+                        with open(latest_json, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            self.tool_reports[tool_name] = data
+                            print(f"[+] Загружен JSON отчет {tool_name}: {latest_json.name}")
+                    except Exception as e:
+                        print(f"[!] Ошибка при загрузке JSON {tool_name}: {e}")
+                        self.tool_reports[tool_name] = {'status': 'error', 'message': str(e)}
+            else:
+                print(f"[*] JSON директория не найдена для {tool_name}")
 
     def merge_txt_reports_line_by_line(self, output_path: Optional[Path] = None, separator: str = '\n') -> str:
         """

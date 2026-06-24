@@ -11,4 +11,5 @@
 /backend/scanners/scan_results
 /backend/reports
 /backend/scan_results
+/backend/pl.txt
 .env

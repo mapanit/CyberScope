@@ -124,7 +124,7 @@ const SearchForm = ({
         </button>
       </div>
 
-      <NavLink to="/help" className="help__link" activeClassName="active">
+      <NavLink to="/Tools" className="help__link" activeClassName="active">
         {language === "ru" ? "Помощник" : "Help"}
       </NavLink>
 
