@@ -18,7 +18,7 @@ from scanners.web_url_scanner import simple_scan as web_scan
 from scanners.osint_scanner import simple_scan as osint_scan
 from scanners.wappalyzer_scanner import simple_scan as wappalyzer_scan, WappalyzerScanner
 from scanners.vulnerability_scanner import VulnerabilityScanner
-from fastapi import FastAPI, HTTPException, Query, Depends, status
+from fastapi import FastAPI, HTTPException, Query, Depends, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -38,6 +38,8 @@ import datetime
 import threading
 import logging
 import whois
+import aiohttp
+import requests
 # Auth imports
 from auth.database import SessionLocal, engine
 from auth import models, schemas, auth
@@ -2669,6 +2671,80 @@ async def get_available_reports():
             status_code=500, detail=f"Ошибка получения списка отчетов: {str(e)}")
 
 
+@app.post("/api/analyze-report")
+async def analyze_report_endpoint(
+    request_body: dict = Body(...),
+    username: str = Depends(verify_token)
+):
+    """
+    Анализировать отчет безопасности с помощью LM Studio AI
+    
+    Принимает путь к файлу отчета и возвращает анализ от ИИ
+    с рекомендациями и шагами по исправлению
+    """
+    try:
+        # Получаем данные отчета из файла
+        file_path = request_body.get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=400, detail="Укажите file_path в теле запроса")
+        
+        reports_base = Path(__file__).parent / "reports"
+        full_path = reports_base / file_path
+        
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail=f"Отчет не найден: {file_path}")
+        
+        with open(full_path, 'r', encoding='utf-8') as f:
+            report_data = json.load(f)
+        
+        # Анализируем через LM Studio
+        analysis_result = await analyze_report_with_ai(report_data)
+        
+        return {
+            "status": "success",
+            "analysis": analysis_result,
+            "report_file": file_path,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in analyze_report_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/lm-studio-status")
+async def lm_studio_status():
+    """
+    Проверить доступность LM Studio
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{LM_STUDIO_API}/models",
+                timeout=aiohttp.ClientTimeout(total=5)
+            ) as response:
+                if response.status == 200:
+                    return {
+                        "status": "online",
+                        "url": LM_STUDIO_URL,
+                        "message": "LM Studio готов к работе"
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "url": LM_STUDIO_URL,
+                        "message": f"LM Studio вернул статус {response.status}"
+                    }
+    except Exception as e:
+        return {
+            "status": "offline",
+            "url": LM_STUDIO_URL,
+            "message": f"LM Studio не доступен: {str(e)}"
+        }
+
+
 @app.get("/api/report-content")
 async def get_report_content(
     report_path: str = Query(...,
@@ -2740,6 +2816,111 @@ def resolve_source_path(source_path: str) -> str:
 
     # Если ничего не найдено, возвращаем исходный путь (вызовет ошибку позже)
     return source_path
+
+
+# ==================== LM Studio Integration ====================
+
+LM_STUDIO_URL = os.getenv("LM_STUDIO_URL", "http://127.0.0.1:1234")
+LM_STUDIO_API = f"{LM_STUDIO_URL}/v1"
+
+
+async def send_to_lm_studio(prompt: str, max_tokens: int = 2000) -> str:
+    """
+    Отправить промпт в LM Studio и получить ответ
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": "local-model",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+                "stream": False
+            }
+            
+            async with session.post(
+                f"{LM_STUDIO_API}/chat/completions",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data["choices"][0]["message"]["content"]
+                else:
+                    logger.error(f"LM Studio error: {response.status}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"LM Studio error: {response.status}"
+                    )
+    except aiohttp.ClientConnectorError:
+        raise HTTPException(
+            status_code=500,
+            detail="LM Studio не доступен. Убедитесь что LM Studio запущен на http://127.0.0.1:1234"
+        )
+    except Exception as e:
+        logger.error(f"Error sending to LM Studio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def analyze_report_with_ai(report_data: dict, report_type: str = "security") -> dict:
+    """
+    Анализировать отчет безопасности через LM Studio AI и получить рекомендации
+    
+    Args:
+        report_data: Данные отчета в формате JSON
+        report_type: Тип отчета (security, vulnerability, etc)
+    
+    Returns:
+        dict с рекомендациями, шагами и анализом
+    """
+    try:
+        # Подготавливаем промпт для анализа
+        report_json = json.dumps(report_data, ensure_ascii=False, indent=2)
+        
+        prompt = f"""Ты эксперт по информационной безопасности. Проанализируй следующий отчет сканирования безопасности и дай детальные рекомендации:
+
+ОТЧЕТ:
+{report_json[:3000]}...
+
+Пожалуйста дай ответ в следующем формате на русском языке:
+
+## 📋 АНАЛИЗ
+[Краткий анализ найденных проблем]
+
+## ⚠️ КРИТИЧНЫЕ ПРОБЛЕМЫ
+[Список критичных проблем если они есть]
+
+## 📋 РЕКОМЕНДАЦИИ
+[Детальные рекомендации по исправлению]
+
+## 🔧 ШАГИ ДЛЯ ИСПРАВЛЕНИЯ
+1. [Первый шаг]
+2. [Второй шаг]
+3. [Третий шаг]
+и т.д.
+
+## ✅ ПРОВЕРКА
+[Как проверить что проблемы исправлены]
+
+## 📊 ПРИОРИТЕТ
+[Определи приоритет каждой проблемы: Критичный/Высокий/Средний/Низкий]"""
+
+        # Отправляем в LM Studio
+        response = await send_to_lm_studio(prompt, max_tokens=3000)
+        
+        return {
+            "status": "success",
+            "analysis": response,
+            "model": "LM Studio Local AI",
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error analyzing report: {str(e)}")
+        raise
+
+
+
 
 
 if __name__ == "__main__":

@@ -27,3 +27,5 @@ python-multipart
 aiofiles
 asyncio-contextmanager
 psycopg2
+aiofiles
+lmstudio

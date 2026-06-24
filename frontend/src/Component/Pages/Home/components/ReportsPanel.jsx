@@ -22,13 +22,12 @@ const ReportsPanel = ({
     deleteTxtReport,
     deleteAllWordReports,
     openReportViewer,
+    openAIAnalysis,
     clearAllReports,
     language = "ru"
 }) => {
     return (
-        <div className="install__info">
-            <NavLink to="/help" className="help__link" activeClassName="help__link">{language === "ru" ? 'Помощник' : 'Helper'}</NavLink>
-            
+        <div className="install__info">            
             <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #e0e0e0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <h6 className='h6'>🛠️ {language === "ru" ? 'Управление отчетами' : 'Report Management'}</h6>
@@ -357,6 +356,7 @@ const ReportsPanel = ({
                                         btnColor="#0066cc"
                                         reportType="json"
                                         onView={openReportViewer}
+                                        onAnalyzeAI={(filename) => openAIAnalysis(null, `combined/json/${filename}`)}
                                         onDownload={() => downloadCombinedReport(report, 'json')}
                                         onDelete={() => deleteCombinedReport(report, 'json')}
                                     />

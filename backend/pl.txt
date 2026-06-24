@@ -14,3 +14,4 @@ CREATE DATABASE db_cs OWNER admin;
 \q
 
 psql -h localhost -U admin -d db_cs -W
+
