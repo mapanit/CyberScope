@@ -19,4 +19,4 @@ COPY . .
 RUN mkdir -p /app/reports/combined/json /app/reports/combined/txt
 
 # Команда запуска бота
-CMD ["python", "bot/bot.py"]
+CMD ["python", "./bot/bot.py"]
