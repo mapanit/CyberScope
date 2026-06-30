@@ -1,4 +1,5 @@
 import os
+import socket
 import asyncio
 import logging
 import json
@@ -33,7 +34,16 @@ else:
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
 
-bot = Bot(token=BOT_TOKEN)
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiohttp import TCPConnector
+
+# Принудительно используем IPv4 — в Docker IPv6 часто "объявлен", но фактически
+# недоступен (Network is unreachable), из-за чего aiohttp подвисает на попытке
+# подключения по IPv6 и в итоге ловит таймаут вместо мгновенного фоллбэка на IPv4.
+_session = AiohttpSession()
+_session._connector_init["family"] = socket.AF_INET
+
+bot = Bot(token=BOT_TOKEN, session=_session)
 dp = Dispatcher()
 
 # Логирование

@@ -11,7 +11,8 @@ services:
       - ./backend/reports:/app/reports
     environment:
       - PYTHONUNBUFFERED=1
-      - SQLALCHEMY_DATABASE_URL=sqlite:///./cyberscope.db
+      - SQLALCHEMY_DATABASE_URL=sqlite:///./СyberScope.db
+      - LM_STUDIO_URL=http://172.17.0.1:1234
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
     networks:
       - cyberscope-network
@@ -30,10 +31,13 @@ services:
       - PYTHONUNBUFFERED=1
       - BOT_TOKEN=${BOT_TOKEN}
       - API_BASE_URL=http://backend:8000/api  # Используем имя сервиса
+      - LM_STUDIO_URL=http://172.17.0.1:1234
     depends_on:
       - backend
     networks:
       - cyberscope-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: on-failure
 
   frontend:
@@ -48,13 +52,18 @@ services:
       - ./frontend/public:/app/public
       - ./frontend/node_modules:/app/node_modules
     environment:
-      - REACT_APP_API_URL=http://localhost:8000  # Для браузера это localhost хоста
+      - REACT_APP_API_URL=http://backend:8000  # Измените на имя сервиса
       - NODE_ENV=development
       - WATCHPACK_POLLING=true
+      - HOST=0.0.0.0
+      - CHOKIDAR_USEPOLLING=true
+      - WDS_SOCKET_PORT=0
     depends_on:
       - backend
     networks:
       - cyberscope-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
   cyberscope-network:
