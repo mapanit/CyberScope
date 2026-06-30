@@ -26,6 +26,6 @@ python-jose[cryptography]
 python-multipart
 aiofiles
 asyncio-contextmanager
-psycopg2
+psycopg2-binary
 aiofiles
 lmstudio
