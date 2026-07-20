@@ -90,7 +90,7 @@
 
 ```bash
 # 1. Клонирование репозитория
-git clone https://github.com/CyberScope.git
+git clone [https://github.com/CyberScope.git](https://github.com/mapanit/CyberScope)
 cd CyberScope
 
 # 2. Установка зависимостей и инструментов
