@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import "./Home.scss";
 import Tools from "./Tools/Tools";
 import SearchForm from "./components/SearchForm";
 import ReportsPanel from "./components/ReportsPanel";
 import ResultsSection from "./components/ResultsSection";
+import CompletedScanCard from "./components/CompletedScanCard";
 import ScanningInfo from "./components/ScanningInfo";
 import ReportViewer from "./components/ReportViewer/ReportViewer";
 import AIAnalysis from "./components/AIAnalysis/AIAnalysis";
@@ -13,6 +14,25 @@ import { useScanState } from "./hooks/useScanState";
 import { useReports } from "./hooks/useReports";
 import { scanService } from "./services/scanService";
 import { reportService } from "./services/reportService";
+
+const loadSavedScanReport = async (filename, reportLists) => {
+  const content = await reportService.getReportContent(filename, "json");
+  const report = JSON.parse(content);
+  const scanId = filename.match(/^combined_report_(.+)\.json$/)?.[1];
+  if (!scanId || !report || typeof report !== "object") {
+    throw new Error("Некорректный формат отчета сканирования");
+  }
+  const findRelatedReport = (reports) =>
+    reports.find((reportName) => reportName.includes(scanId));
+  const combinedReports = {
+    json: filename,
+    txt: findRelatedReport(reportLists.txt),
+    docx: findRelatedReport(reportLists.word),
+    md: findRelatedReport(reportLists.md),
+  };
+
+  return { ...report, combined_reports: combinedReports };
+};
 
 const Search = ({ language = "ru" }) => {
   const [activeMenu, setActiveMenu] = useState(false);
@@ -28,6 +48,7 @@ const Search = ({ language = "ru" }) => {
     filename: "",
     reportType: "",
   });
+  const [reportLoadError, setReportLoadError] = useState("");
 
   // кастомные хуки для управления состоянием
   const {
@@ -37,6 +58,8 @@ const Search = ({ language = "ru" }) => {
     setQuery,
     loading,
     setLoading,
+    scanProgress,
+    setScanProgress,
     results,
     setResults,
     scanAborted,
@@ -46,6 +69,7 @@ const Search = ({ language = "ru" }) => {
     expandedJsonTools,
     setExpandedJsonTools,
     abortControllerRef,
+    scanIdRef,
     cancelScan,
   } = useScanState();
 
@@ -62,6 +86,39 @@ const Search = ({ language = "ru" }) => {
     fetchCombinedReports,
     fetchTxtReports,
   } = useReports();
+
+  useEffect(() => {
+    if (loading || loadingCombined || results || !combinedReports.json.length) {
+      return undefined;
+    }
+
+    let active = true;
+    const latestReport = combinedReports.json[0];
+    loadSavedScanReport(latestReport, combinedReports)
+      .then((report) => {
+        if (active) setResults(report);
+      })
+      .catch((error) => {
+        if (active) {
+          setReportLoadError(error.message);
+          console.error("Не удалось загрузить последний отчет сканирования:", error);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [combinedReports, loading, loadingCombined, results, setResults]);
+
+  const selectCombinedReport = async (filename) => {
+    try {
+      setReportLoadError("");
+      setResults(await loadSavedScanReport(filename, combinedReports));
+    } catch (error) {
+      setReportLoadError(error.message);
+      console.error("Не удалось загрузить отчет сканирования:", error);
+    }
+  };
 
   // Основной обработчик отправки формы
 
@@ -94,7 +151,9 @@ const Search = ({ language = "ru" }) => {
     try {
       const allResults = [];
       setLoading(true);
+      setScanProgress(null);
       setResults(null);
+      setReportLoadError("");
       setScanAborted(false);
       abortControllerRef.current = new AbortController();
 
@@ -102,11 +161,15 @@ const Search = ({ language = "ru" }) => {
         if (!url || !url.trim()) continue;  // ✅ Добавил проверку на null/undefined
 
         try {
+          const scanId = crypto.randomUUID();
+          scanIdRef.current = scanId;
           const data = await scanService.runScan(
             url,
             activeTools,
             allowInternal,
             abortControllerRef.current.signal,
+            scanId,
+            setScanProgress,
           );
 
           if (!scanAborted) {
@@ -123,6 +186,8 @@ const Search = ({ language = "ru" }) => {
               timestamp: new Date().toISOString(),
             });
           }
+        } finally {
+          scanIdRef.current = null;
         }
       }
 
@@ -200,6 +265,10 @@ const Search = ({ language = "ru" }) => {
           : "Error downloading file",
       );
     }
+  };
+
+  const downloadContent = (content, filename, contentType) => {
+    reportService.downloadContent(content, filename, contentType);
   };
 
   const downloadTxtReport = async (tool, filename) => {
@@ -517,154 +586,19 @@ const Search = ({ language = "ru" }) => {
 
   // Функция рендеринга объединенных результатов
   const renderCombinedResults = (results) => {
-    if (results.status === "success" && results.combined_reports) {
+    if (results.combined_reports && results.status !== "cancelled") {
       const toolsCount =
         results.tools_count || results.tools_executed?.length || 0;
       const scanId = results.scan_id || "unknown";
 
       return (
         <div className="combined-results">
-          <div className="combined-summary">
-            <h3>
-              {language === "ru"
-                ? "📊 Объединенный отчет сканирования"
-                : "📊 Combined Scan Report"}
-            </h3>
-            <div className="summary-info">
-              <p>
-                <strong>
-                  {language === "ru" ? "ID сканирования:" : "Scan ID:"}
-                </strong>{" "}
-                {scanId}
-              </p>
-              <p>
-                <strong>
-                  {language === "ru" ? "Целевой адрес:" : "Target Address:"}
-                </strong>{" "}
-                {results.target}
-              </p>
-              <p>
-                <strong>
-                  {language === "ru"
-                    ? "Используемых инструментов:"
-                    : "Tools Used:"}
-                </strong>{" "}
-                {toolsCount}
-              </p>
-              <p>
-                <strong>{language === "ru" ? "Инструменты:" : "Tools:"}</strong>{" "}
-                {results.tools_executed?.join(", ") || "N/A"}
-              </p>
-            </div>
-            {results.combined_reports && (
-              <div
-                className="combined-reports-links"
-                style={{
-                  marginTop: "12px",
-                  paddingTop: "12px",
-                  borderTop: "1px solid #e0e0e0",
-                }}
-              >
-                <h5>
-                  {language === "ru" ? "Скачать отчеты:" : "Download Reports:"}
-                </h5>
-                {results.combined_reports.json && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadCombinedReport(
-                        results.combined_reports.json.split("/").pop(),
-                        "json",
-                      )
-                    }
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "#0066cc",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "3px",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      marginRight: "8px",
-                      marginBottom: "8px",
-                    }}
-                    onMouseOver={(e) =>
-                      (e.target.style.backgroundColor = "#0052a3")
-                    }
-                    onMouseOut={(e) =>
-                      (e.target.style.backgroundColor = "#0066cc")
-                    }
-                  >
-                    {language === "ru"
-                      ? "📄 Скачать JSON отчет"
-                      : "📄 Download JSON Report"}
-                  </button>
-                )}
-                {results.combined_reports.docx && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadCombinedReport(
-                        results.combined_reports.docx.split("/").pop(),
-                        "word",
-                      )
-                    }
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "#28a745",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "3px",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      marginBottom: "8px",
-                    }}
-                    onMouseOver={(e) =>
-                      (e.target.style.backgroundColor = "#218838")
-                    }
-                    onMouseOut={(e) =>
-                      (e.target.style.backgroundColor = "#28a745")
-                    }
-                  >
-                    {language === "ru"
-                      ? "📘 Скачать Word отчет"
-                      : "📘 Download Word Report"}
-                  </button>
-                )}
-                {results.combined_reports.txt && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadCombinedReport(
-                        results.combined_reports.txt.split("/").pop(),
-                        "txt",
-                      )
-                    }
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "#ea9330",
-                      color: "white",
-                      border: "none",
-                      borderRadius: "3px",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                      marginBottom: "8px",
-                    }}
-                    onMouseOver={(e) =>
-                      (e.target.style.backgroundColor = "#ea9330")
-                    }
-                    onMouseOut={(e) =>
-                      (e.target.style.backgroundColor = "#ea9330")
-                    }
-                  >
-                    {language === "ru"
-                      ? "📘 Скачать TXT отчет"
-                      : "📘 Download TXT Report"}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          <CompletedScanCard
+            results={{ ...results, tools_count: toolsCount, scan_id: scanId }}
+            language={language}
+            onDownloadReport={downloadCombinedReport}
+            onDownloadContent={downloadContent}
+          />
 
           {results.results &&
             Object.entries(results.results).map(([toolName, toolResult]) => {
@@ -870,6 +804,7 @@ const Search = ({ language = "ru" }) => {
               deleteAllWordReports={deleteAllWordReports}
               clearAllReports={clearAllReports}
               openReportViewer={openReportViewer}
+              onSelectCombinedReport={selectCombinedReport}
               openAIAnalysis={openAIAnalysis}
               language={language}
             />
@@ -880,18 +815,24 @@ const Search = ({ language = "ru" }) => {
               activeTools={activeTools}
               query={query}
               cancelScan={cancelScan}
+              scanProgress={scanProgress}
               language={language}
             />
           ) : (
-            <ResultsSection
-              results={results}
-              scanAborted={scanAborted}
-              expandedJsonTools={expandedJsonTools}
-              setExpandedJsonTools={setExpandedJsonTools}
-              renderScannerResults={renderScannerResults}
-              renderCombinedResults={renderCombinedResults}
-              language={language}
-            />
+            <>
+              {reportLoadError && (
+                <p role="alert" className="error-message">{reportLoadError}</p>
+              )}
+              <ResultsSection
+                results={results}
+                scanAborted={scanAborted}
+                expandedJsonTools={expandedJsonTools}
+                setExpandedJsonTools={setExpandedJsonTools}
+                renderScannerResults={renderScannerResults}
+                renderCombinedResults={renderCombinedResults}
+                language={language}
+              />
+            </>
           )}
         </div>
       </div>

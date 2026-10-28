@@ -7,9 +7,11 @@ python-docx
 PyYAML
 pyvis
 pydig
+dnspython
 Wappalyzer
 similar
 whatweb
+whois
 python-nmap
 python-whois
 xmltodict

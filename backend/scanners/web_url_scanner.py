@@ -420,6 +420,7 @@ class WebScanner:
                 script_dir / "wordlists" / "common.txt",  # в папке wordlists рядом со скриптом
                 script_dir / "../wordlists/common.txt",   # на уровень выше
                 # системный путь для Kali/Linux
+                Path("/usr/share/dirb/wordlists/common.txt"),
                 Path("/usr/share/wordlists/dirb/common.txt"),
                 # альтернативный
                 Path("/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"),

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import "./Dashboard.scss";
 import { NavLink } from "react-router-dom";
+import { API_BASE_URL } from "../../../../api";
 
 function Dashboard({ token, onLogout }) {
   const [userData, setUserData] = useState(null);
@@ -11,7 +12,7 @@ function Dashboard({ token, onLogout }) {
   useEffect(() => {
     const fetchUserData = async () => {
       try {
-        const response = await axios.get("http://localhost:8000/auth/me", {
+        const response = await axios.get(`${API_BASE_URL}/auth/me`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../../../../api';
 import './ScheduleScanner.scss';
 
 const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, activeTools, setActiveTools, query, setQuery, allowInternal, setAllowInternal, onSchedule, language = "ru" }) => {
@@ -33,6 +34,8 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     { id: "osint", label: "OSINT", icon: "🌐" },
     { id: "wappalyzer", label: "Wappalyzer", icon: "⚙️" },
     { id: "nuclei", label: "Nuclei", icon: "🎯" },
+    { id: "nmap", label: "Nmap", icon: "🖧" },
+    { id: "dns", label: "DNS", icon: "📡" },
     { id: "whois", label: "WhoIS", icon: "📝" },
     { id: "web", label: "Web", icon: "🌍" },
     { id: "retire", label: "Retire", icon: "🌍" },
@@ -49,25 +52,14 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   // Загрузить задачи с backend
   const fetchTasks = async () => {
     try {
-      const response = await fetch('http://localhost:8000/api/tasks');
+      const response = await apiFetch('/api/tasks');
       const data = await response.json();
       if (data.status === 'success') {
         setScheduledTasks(data.tasks);
       }
     } catch (error) {
       console.error('Ошибка при загрузке задач:', error);
-      // Fallback на localStorage
-      const saved = localStorage.getItem('scheduledScans');
-      if (saved) {
-        setScheduledTasks(JSON.parse(saved));
-      }
     }
-  };
-
-  // Сохранение задач (локально для UI, отправка на backend при создании)
-  const saveTasks = (tasks) => {
-    localStorage.setItem('scheduledScans', JSON.stringify(tasks));
-    setScheduledTasks(tasks);
   };
 
   // Расчет следующего запуска
@@ -177,6 +169,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
     }
 
     const newTask = {
+      query: validUrls[0],
       type: scheduleType,
       time: scheduleTime,
       date: scheduleDate,
@@ -193,7 +186,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
 
     try {
       // Отправляем задачу на backend
-      const response = await fetch('http://localhost:8000/api/tasks', {
+      const response = await apiFetch('/api/tasks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -205,8 +198,6 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
         throw new Error('Failed to create task on server');
       }
 
-      const data = await response.json();
-      
       // Перезагружаем список задач с backend
       await fetchTasks();
       
@@ -232,7 +223,7 @@ const ScheduleScanner = ({ activeScheduleScanner, setActiveScheduleScanner, acti
   const deleteTask = async (taskId) => {
     if (window.confirm(language === "ru" ? 'Вы уверены, что хотите удалить это запланированное сканирование?' : 'Are you sure you want to delete this scheduled scan?')) {
       try {
-        const response = await fetch(`http://localhost:8000/api/tasks/${taskId}`, {
+        const response = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
           method: 'DELETE'
         });
 

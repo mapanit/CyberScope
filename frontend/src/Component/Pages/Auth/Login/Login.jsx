@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { Router, useNavigate, NavLink } from "react-router-dom";
+import { API_BASE_URL } from "../../../../api";
 import "./Login.scss";
 
 function Login({ setToken }) {
@@ -16,7 +17,7 @@ function Login({ setToken }) {
     setLoading(true);
 
     try {
-      const response = await axios.post("http://localhost:8000/auth/login", {
+      const response = await axios.post(`${API_BASE_URL}/auth/login`, {
         username,
         password,
       });

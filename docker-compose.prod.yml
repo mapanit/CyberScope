@@ -1,0 +1,71 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      SQLALCHEMY_DATABASE_URL: ${SQLALCHEMY_DATABASE_URL:-sqlite:////app/data/CyberScope.db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in the root .env file}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:3000}
+      LM_STUDIO_URL: ${LM_STUDIO_URL:-http://host.docker.internal:1234}
+    volumes:
+      - database_data:/app/data
+      - reports_data:/app/reports
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  bot:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.bot
+    profiles: ["bot"]
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      API_BASE_URL: http://backend:8000/api
+      LM_STUDIO_URL: ${LM_STUDIO_URL:-http://host.docker.internal:1234}
+    volumes:
+      - reports_data:/app/reports
+    depends_on:
+      backend:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  database_data:
+  reports_data:

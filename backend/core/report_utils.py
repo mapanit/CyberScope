@@ -215,7 +215,8 @@ class CombinedReport:
         return collected_files
 
     def collect_recent_files(self, reports_base_dir: Optional[Path] = None,
-                             recent_minutes: int = 5) -> Dict[str, Path]:
+                             recent_minutes: int = 5,
+                             tool_names: Optional[List[str]] = None) -> Dict[str, Path]:
         """
         Собрать пути к недавно созданным TXT файлам
 
@@ -235,8 +236,10 @@ class CombinedReport:
         cutoff_time = datetime.now() - timedelta(minutes=recent_minutes)
 
         # Список инструментов для сбора
-        tools = ['wappalyzer', 'scanner', 'nuclei',
-                 'whois', 'web', 'osint', 'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap']
+        tools = tool_names or [
+            'wappalyzer', 'scanner', 'nuclei', 'whois', 'web', 'osint',
+            'amass', 'katana', 'retire', 'cors', 'ssl-tls', 'dns', 'sast', 'nmap'
+        ]
 
         collected_files = {}
 
@@ -954,8 +957,9 @@ class CombinedReport:
             traceback.print_exc()
             return ""
 
-    def collect_and_merge_recent_with_docx(self, recent_minutes: int = 5, method: str = 'line_by_line', 
-                                           include_docx: bool = True) -> Dict[str, str]:
+    def collect_and_merge_recent_with_docx(self, recent_minutes: int = 5, method: str = 'line_by_line',
+                                           include_docx: bool = True,
+                                           tool_names: Optional[List[str]] = None) -> Dict[str, str]:
         """
         Собрать недавние файлы, объединить их и создать DOCX отчет
 
@@ -968,7 +972,7 @@ class CombinedReport:
             Dict с путями к JSON, TXT и DOCX отчетам
         """
         # Собираем недавние файлы
-        self.collect_recent_files(recent_minutes=recent_minutes)
+        self.collect_recent_files(recent_minutes=recent_minutes, tool_names=tool_names)
 
         # Сохраняем JSON
         json_path = self.save_json()
@@ -987,7 +991,8 @@ class CombinedReport:
             'docx': docx_path
         }
 
-    def collect_and_merge_recent(self, recent_minutes: int = 5, method: str = 'line_by_line') -> Dict[str, str]:
+    def collect_and_merge_recent(self, recent_minutes: int = 5, method: str = 'line_by_line',
+                                 tool_names: Optional[List[str]] = None) -> Dict[str, str]:
         """
         Собрать недавние файлы и объединить их в один отчет
 
@@ -999,7 +1004,7 @@ class CombinedReport:
             Dict с путями к JSON и TXT отчетам
         """
         # Собираем недавние файлы
-        self.collect_recent_files(recent_minutes=recent_minutes)
+        self.collect_recent_files(recent_minutes=recent_minutes, tool_names=tool_names)
 
         # Сохраняем JSON
         json_path = self.save_json()
@@ -1044,7 +1049,8 @@ class CombinedReport:
 
 def create_combined_report(scan_id: str, reports_base_dir: Optional[Path] = None,
                            recent_minutes: int = 5, method: str = 'line_by_line',
-                           include_docx: bool = True) -> Dict[str, str]:
+                           include_docx: bool = True,
+                           tool_names: Optional[List[str]] = None) -> Dict[str, str]:
     """
     Создать объединённый отчет из недавно созданных отчетов инструментов
 
@@ -1060,9 +1066,17 @@ def create_combined_report(scan_id: str, reports_base_dir: Optional[Path] = None
     """
     combined = CombinedReport(scan_id, reports_base_dir)
     if include_docx:
-        return combined.collect_and_merge_recent_with_docx(recent_minutes=recent_minutes, method=method)
+        return combined.collect_and_merge_recent_with_docx(
+            recent_minutes=recent_minutes,
+            method=method,
+            tool_names=tool_names,
+        )
     else:
-        result = combined.collect_and_merge_recent(recent_minutes=recent_minutes, method=method)
+        result = combined.collect_and_merge_recent(
+            recent_minutes=recent_minutes,
+            method=method,
+            tool_names=tool_names,
+        )
         result['docx'] = ""
         return result
 

@@ -7,6 +7,7 @@ import asyncio
 import datetime
 import json
 import threading
+import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Callable
 import logging
@@ -67,7 +68,7 @@ class ScanScheduler:
         Returns:
             task_id: ID добавленной задачи
         """
-        task_id = str(task.get('id', int(datetime.datetime.now().timestamp() * 1000)))
+        task_id = str(uuid.uuid4())
         task['status'] = 'pending'
         task['created_at'] = datetime.datetime.now().isoformat()
         task['last_run'] = None
@@ -227,6 +228,7 @@ class ScanScheduler:
         
         try:
             scan_results = []
+            has_failed_tool = False
             
             # Запускаем каждый инструмент
             for tool in task.get('activeTools', []):
@@ -237,7 +239,8 @@ class ScanScheduler:
                         result = await callback(
                             target=task['query'],
                             allow_internal=task.get('allowInternal', False),
-                            task_id=scan_folder  # Передаем ID папки вместо task_id
+                            task_id=scan_folder,
+                            username=task['username']
                         )
                         scan_results.append({
                             'tool': tool,
@@ -246,6 +249,7 @@ class ScanScheduler:
                         })
                         logger.info(f"   ✓ {tool} завершен")
                     except Exception as e:
+                        has_failed_tool = True
                         logger.error(f"   ✗ Ошибка при запуске {tool}: {e}")
                         scan_results.append({
                             'tool': tool,
@@ -253,11 +257,19 @@ class ScanScheduler:
                             'error': str(e)
                         })
                 else:
+                    has_failed_tool = True
                     logger.warning(f"   ⚠ Callback для {tool} не зарегистрирован")
+                    scan_results.append({
+                        'tool': tool,
+                        'status': 'failed',
+                        'error': 'Callback не зарегистрирован',
+                    })
             
-            task['status'] = 'completed'
+            task['status'] = 'failed' if has_failed_tool else 'completed'
             task['scan_results'] = scan_results
-            logger.info(f"✓ Задача завершена: {task_id}")
+            logger.info(
+                f"{'✗' if has_failed_tool else '✓'} Задача завершена: {task_id}"
+            )
             logger.info(f"   📁 Папка отчетов: {scan_folder}")
             
         except Exception as e:

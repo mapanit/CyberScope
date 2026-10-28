@@ -1,5 +1,5 @@
 /frontend/node_modules
-/frontend/package-lock.json
+/frontend/build
 /backend/venv
 /backend/__pycache__
 /backend/tools/__pycache__
@@ -13,3 +13,15 @@
 /backend/scan_results
 /backend/pl.txt
 .env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+*.log
+.DS_Store
+Thumbs.db

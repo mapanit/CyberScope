@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiFetch } from '../../../../api';
 
 /**
  * Hook для управления отчетами (Word, TXT и Combined)
@@ -8,14 +9,14 @@ export const useReports = () => {
     const [loadingReports, setLoadingReports] = useState(false);
     const [txtReports, setTxtReports] = useState({});
     const [loadingTxtReports, setLoadingTxtReports] = useState(false);
-    const [combinedReports, setCombinedReports] = useState({ json: [], txt: [], word: [] });
+    const [combinedReports, setCombinedReports] = useState({ json: [], txt: [], word: [], md: [] });
     const [loadingCombined, setLoadingCombined] = useState(false);
     const [combinedReportFilter, setCombinedReportFilter] = useState('all');
 
     const fetchWordReports = async () => {
         setLoadingReports(true);
         try {
-            const response = await fetch('http://localhost:8000/api/word-reports');
+            const response = await apiFetch('/api/word-reports');
             const data = await response.json();
             if (data.status === 'success') {
                 setWordReports(data.reports);
@@ -30,13 +31,14 @@ export const useReports = () => {
     const fetchCombinedReports = async () => {
         setLoadingCombined(true);
         try {
-            const response = await fetch('http://localhost:8000/api/combined-reports');
+            const response = await apiFetch('/api/combined-reports');
             const data = await response.json();
             if (data.status === 'success') {
                 setCombinedReports({
                     json: data.json_reports || [],
                     txt: data.txt_reports || [],
-                    word: data.word_reports || []
+                    word: data.word_reports || [],
+                    md: data.md_reports || []
                 });
             }
         } catch (error) {
@@ -49,7 +51,7 @@ export const useReports = () => {
     const fetchTxtReports = async () => {
         setLoadingTxtReports(true);
         try {
-            const response = await fetch('http://localhost:8000/api/txt-reports');
+            const response = await apiFetch('/api/txt-reports');
             const data = await response.json();
             if (data.status === 'success') {
                 setTxtReports(data.reports || {});

@@ -5,6 +5,7 @@ const ScanningInfo = ({
     activeTools, 
     query, 
     cancelScan, 
+    scanProgress,
     language = "ru" 
 }) => {
     const [elapsedTime, setElapsedTime] = useState(0);
@@ -34,6 +35,8 @@ const ScanningInfo = ({
     const toolsList = Array.isArray(activeTools) 
         ? activeTools 
         : (typeof activeTools === 'string' ? activeTools.split(',').map(t => t.trim()) : []);
+    const progress = Math.max(0, Math.min(100, scanProgress?.progress || 0));
+    const queued = scanProgress?.scan_status === "queued";
 
     return (
         <div className="scanning-info">
@@ -43,9 +46,11 @@ const ScanningInfo = ({
                     <div className="scanning-status">
                         <span className="pulse-dot"></span>
                         <h3>
-                            {language === "ru" 
-                                ? "🔍 Сканирование в процессе" 
-                                : "🔍 Scanning in progress"}
+                            {queued
+                                ? (language === "ru" ? "⏳ Сканирование в очереди" : "⏳ Scan queued")
+                                : (language === "ru"
+                                    ? "🔍 Сканирование в процессе"
+                                    : "🔍 Scanning in progress")}
                         </h3>
                     </div>
                 </div>
@@ -92,8 +97,17 @@ const ScanningInfo = ({
                     <div className="info-block">
                         <label>{language === "ru" ? "📊 Прогресс:" : "📊 Progress:"}</label>
                         <div className="progress-bar">
-                            <div className="progress-fill"></div>
+                            <div className="progress-fill" style={{ width: `${progress}%` }}></div>
                         </div>
+                        <div className="info-value">
+                            {progress}%
+                        </div>
+                        {scanProgress?.current_tool && (
+                            <div className="info-value">
+                                {language === "ru" ? "Текущий инструмент: " : "Current tool: "}
+                                {scanProgress.current_tool}
+                            </div>
+                        )}
                     </div>
 
                     {/* Советы */}

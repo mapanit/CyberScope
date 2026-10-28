@@ -1,6 +1,6 @@
 # 🌐 CyberScope
 
-Автоматизированная веб-платформа для комплексного анализа безопасности веб-ресурсов. Объединяет множество инструментов пентеста в едином интерфейсе с поддержкой отчётов JSON, TXT и DOCX.
+Автоматизированная веб-платформа для комплексного анализа безопасности веб-ресурсов. Объединяет множество инструментов пентеста в едином интерфейсе с поддержкой отчётов JSON, TXT, Markdown и DOCX.
 
 <video src="./cs.mp4" controls="controls" style="max-width: 100%;"></video>
 =======
@@ -13,7 +13,7 @@
 
 - 🎯 **Проводить многоаспектное тестирование безопасности** одного веб-ресурса с использованием 9+ специализированных сканеров
 - 🔄 **Автоматизировать рабочий процесс** через единый интерфейс вместо использования отдельных утилит
-- 📊 **Генерировать отчёты** в формате JSON, TXT и Word (DOCX)
+- 📊 **Генерировать отчёты** в формате JSON, TXT, Markdown и Word (DOCX)
 - 💾 **Сохранять полную историю сканирований** для сравнительного анализа
 
 Платформа идеальна для:
@@ -65,9 +65,12 @@
 - **Экспорт в несколько форматов:**
   - JSON — для автоматизации и интеграции
   - TXT — для быстрого просмотра
+  - Markdown — для чтения, версионирования и публикации в системах документации
   - DOCX — профессиональные отчёты для клиентов
 - **Сохранение полной истории** сканирований с timestamps
-- **Возможность сравнения результатов** между разными временными периодами
+- **Очередь сканирований** с отображением текущего инструмента и прогресса
+- **Нормализованные находки** и сравнение запусков одной цели (добавленные, устранённые и неизменившиеся)
+- **Проверка доступности инструментов** и их зависимостей через каталог в интерфейсе
 - **Генерация изображений отчётов** для презентаций
 
 ### 🤖 Автоматизация через Telegram
@@ -80,8 +83,8 @@
 
 ### Требования к системе
 - **ОС:** Linux (Ubuntu 20.04+), macOS или Windows (с WSL2)
-- **Python:** 3.8+
-- **Node.js:** 14+
+- **Python:** 3.12
+- **Node.js:** 24+
 - **Docker:** 20.10+ (опционально, для контейнеризации)
 - **Диск:** минимум 4 ГБ для инструментов и моделей LM
 - **RAM:** рекомендуется 8 ГБ+ для работы LM Studio (опционально)
@@ -93,33 +96,83 @@
 git clone https://github.com/mapanit/CyberScope
 cd CyberScope
 
-# 2. Установка зависимостей и инструментов
+# 2. Создайте корневой .env по примеру ниже
+
+# 3. Установка закреплённых версий внешних инструментов (Linux/macOS/WSL2)
 chmod +x install-tools.sh
 ./install-tools.sh
 
-# 3. Запуск Backend (FastAPI + Python)
+# 4. Запуск Backend (FastAPI + Python), в первом терминале
 cd backend
-python -m venv venv
+python3.12 -m venv venv
 source venv/bin/activate  # На Windows: venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn server:app --reload --host 0.0.0.0 --port 8000
 
-# 4. Запуск Frontend (React) - в отдельном терминале
+# 5. Запуск Frontend (React), во втором терминале из корня репозитория
 cd frontend
-npm install
-npm start
+npm ci
+REACT_APP_API_URL=http://localhost:8000 npm start
 # Откроется на http://localhost:3000
 ```
+
+### API сканирований
+
+Интерфейс ставит задания в очередь через `POST /api/scans`, затем опрашивает
+`GET /api/scan-status` и забирает результат из `GET /api/scan-results`.
+Сравнение двух сохранённых JSON-отчётов одной цели доступно через
+`GET /api/compare-scans`. Список инструментов и локальных зависимостей
+возвращает `GET /api/tools`. Эти endpoint-ы требуют авторизации.
 
 ### Запуск через Docker (рекомендуется)
 
 ```bash
-# Один-команда запуск всего приложения
-docker-compose up
+# Создайте корневой .env по примеру ниже, затем:
+docker compose up
 
 # Backend будет доступен на http://localhost:8000
 # Frontend на http://localhost:3000
+
+# Telegram-бот (необязательный) требует заполненного BOT_TOKEN:
+docker compose --profile bot up
 ```
+
+### Production Docker
+
+Production-развёртывание собирает frontend как статические файлы для Nginx, ожидает готовности backend и хранит SQLite-базу и отчёты в отдельных постоянных Docker volumes. Обязателен корневой `.env` с `JWT_SECRET_KEY` длиной не менее 32 символов.
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+Сайт будет доступен на http://localhost:3000, API — на http://localhost:8000. Для запуска Telegram-бота добавьте `BOT_TOKEN` в `.env` и включите профиль:
+
+```bash
+docker compose -f docker-compose.prod.yml --profile bot up --build -d
+```
+
+В production `REACT_APP_API_URL` должен указывать на адрес API, доступный браузеру, а `FRONTEND_ORIGINS` — содержать origin сайта. Перед публикацией сервиса в интернете настройте HTTPS reverse proxy.
+
+### Тесты и CI
+
+Backend-тесты запускаются из каталога `backend/` после установки тестовых зависимостей:
+
+```bash
+pip install -r requirements-test.txt
+pytest -q
+```
+
+Frontend-тесты и production-сборка запускаются из каталога `frontend/`:
+
+```bash
+npm ci
+npm test -- --watchAll=false
+npm run build
+```
+
+GitHub Actions выполняет эти проверки и Python compile check для push и pull request. В интерфейсе общий и поинструментальный статусы показывают `Успешно`, `Находок нет`, `Ошибка`, `Тайм-аут` или `Отменено`.
+
+`install-tools.sh` и API Dockerfile используют фиксированные версии Katana 1.8.0, Amass 5.1.3, Nuclei 3.11.1, Dalfox 2.12.0, Subfinder 2.17.0, httpx 1.12.0, waybackurls 0.1.0 и Gobuster 3.8.2; JSFinder закреплён по commit SHA.
 
 ### Использование LM Studio (опционально)
 
@@ -134,23 +187,29 @@ LM_STUDIO_URL="http://localhost:1234"
 ### Использование Telegram-бота
 
 ```bash
-# Установить токен бота в переменные окружения
-TELEGRAM_BOT_TOKEN="ваш_токен"
+# Заполнить BOT_TOKEN в корневом .env
 
 # Запустить бота
 python backend/bot/bot.py
 ```
 
-### Настройка env
+### Настройка окружения
 
-Создайте файл .env в корневой директории backend:
+Создайте файл `.env` в корне репозитория:
 
-# Вариант 1: SQLite (для разработки)
+```env
 SQLALCHEMY_DATABASE_URL=sqlite:///./CyberScope.db
+JWT_SECRET_KEY=replace-with-at-least-32-random-characters
+REACT_APP_API_URL=http://localhost:8000
+FRONTEND_ORIGINS=http://localhost:3000
+BOT_TOKEN=
+LM_STUDIO_URL=http://localhost:1234
+```
 
-# Вариант 2: PostgreSQL (для продакшена)
-SQLALCHEMY_DATABASE_URL=postgresql://postgres:password@localhost:5432/db_cs
-
+Для PostgreSQL укажите полный SQLAlchemy URL, например `postgresql://user:password@localhost:5432/db_cs`.
+`SQLALCHEMY_DATABASE_URL` и `JWT_SECRET_KEY` обязательны; секрет должен содержать не менее 32 символов. Его можно сгенерировать командой `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Не добавляйте `.env` в git.
+`REACT_APP_API_URL` должен указывать на backend, доступный браузеру; по умолчанию Docker Compose использует `http://localhost:8000`.
+`BOT_TOKEN` требуется только для Telegram-бота. `LM_STUDIO_URL` — необязательный URL LM Studio: `http://localhost:1234` при локальном запуске и `http://host.docker.internal:1234` в Docker Desktop.
 
 ## 🏗️ Архитектура
 
@@ -198,7 +257,7 @@ CyberScope/
 - pydantic — валидация данных
 
 **Frontend:**
-- React 18 — основной фреймворк
+- React 19 — основной фреймворк
 - SCSS — препроцессор стилей
 - Axios — HTTP клиент
 - React Router — маршрутизация
@@ -269,7 +328,7 @@ kill -9 <PID>
 ## 📊 Статистика проекта
 
 - **Поддерживаемых сканеров:** 11+
-- **Форматов экспорта:** 3 (JSON, TXT, DOCX)
+- **Форматов экспорта:** 4 (JSON, TXT, Markdown, DOCX)
 - **Строк кода (Backend):** ~5000+
 - **Строк кода (Frontend):** ~3000+
 

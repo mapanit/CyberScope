@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate, NavLink } from "react-router-dom";
+import { API_BASE_URL } from "../../../../api";
 import "./Register.scss";
 
 function Register({ setToken }) {
@@ -29,14 +30,14 @@ function Register({ setToken }) {
 
     try {
       // Регистрация
-      await axios.post("http://localhost:8000/auth/register", {
+      await axios.post(`${API_BASE_URL}/auth/register`, {
         username,
         password,
       });
 
       // Автоматический вход после регистрации
       const loginResponse = await axios.post(
-        "http://localhost:8000/auth/login",
+        `${API_BASE_URL}/auth/login`,
         {
           username,
           password,

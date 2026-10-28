@@ -1,6 +1,8 @@
 # server.py
 from scheduler import get_scheduler
-from core.report_utils import create_combined_report
+from core.report_utils import CombinedReport, create_combined_report
+from core.reporting import normalize_findings, render_markdown_report
+from core.tool_registry import TOOL_IDS, get_tool_catalog
 from core.async_utils import (
     save_json_report_async,
     save_txt_report_async,
@@ -22,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, PlainTextResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from urllib.parse import urlparse
 import asyncio
@@ -37,6 +40,8 @@ import json
 import datetime
 import threading
 import logging
+import hashlib
+import uuid
 import whois
 import aiohttp
 import requests
@@ -46,6 +51,11 @@ from auth import models, schemas, auth
 from jose import JWTError, jwt
 
 logger = logging.getLogger(__name__)
+
+SCHEDULED_TOOL_IDS = {
+    "scanner", "nuclei", "osint", "wappalyzer", "ssl-tls",
+    "nmap", "cors", "dns", "retire", "whois", "web",
+}
 
 # Initialize database
 models.Base.metadata.create_all(bind=engine)
@@ -59,6 +69,22 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def user_reports_dir(username: str) -> Path:
+    user_key = hashlib.sha256(username.encode("utf-8")).hexdigest()
+    return Path(__file__).parent / "reports" / "users" / user_key
+
+
+def resolve_user_report_path(username: str, relative_path: str) -> Path:
+    reports_base = user_reports_dir(username).resolve()
+    report_path = (reports_base / relative_path).resolve()
+    try:
+        report_path.relative_to(reports_base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Недопустимый путь к отчету") from exc
+    return report_path
+
 
 # Function to verify JWT token
 
@@ -90,16 +116,32 @@ _scan_sessions = {}
 _scan_sessions_lock = threading.Lock()
 
 
-def create_scan_session(scan_id: str) -> dict:
+def create_scan_session(
+    scan_id: str,
+    username: str,
+    scan_status: str = "running",
+    target: str = None,
+    tools: list[str] = None,
+) -> dict:
     """Создать сессию сканирования"""
     with _scan_sessions_lock:
+        existing = _scan_sessions.get(scan_id)
+        if existing and existing.get("active"):
+            raise HTTPException(status_code=409, detail="ID сканирования уже используется")
         session = {
             'scan_id': scan_id,
+            'username': username,
             'active': True,
             'cancelled': False,
+            'status': scan_status,
             'start_time': datetime.datetime.now(),
             'progress': 0,
-            'current_tool': None
+            'current_tool': None,
+            'target': target,
+            'tools': tools or [],
+            'completed_tools': 0,
+            'total_tools': len(tools or []),
+            'process': None
         }
         _scan_sessions[scan_id] = session
         return session
@@ -122,34 +164,172 @@ def is_scan_active(scan_id: str) -> bool:
 def cancel_scan_session(scan_id: str) -> bool:
     """Отменить сессию сканирования"""
     with _scan_sessions_lock:
-        if scan_id in _scan_sessions:
-            _scan_sessions[scan_id]['cancelled'] = True
-            _scan_sessions[scan_id]['active'] = False
+        session = _scan_sessions.get(scan_id)
+        if session and session.get('active'):
+            session['cancelled'] = True
+            session['active'] = False
+            session['status'] = 'cancelled'
+            process = session.get('process')
+            if process and process.returncode is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
             return True
     return False
 
 
-def end_scan_session(scan_id: str):
+def end_scan_session(
+    scan_id: str,
+    scan_status: str = None,
+    result: dict = None,
+    error: str = None,
+):
     """Завершить сессию сканирования"""
     with _scan_sessions_lock:
         if scan_id in _scan_sessions:
             _scan_sessions[scan_id]['active'] = False
             _scan_sessions[scan_id]['end_time'] = datetime.datetime.now()
+            session = _scan_sessions[scan_id]
+            session['status'] = scan_status or (
+                'cancelled' if session['cancelled'] else 'completed'
+            )
+            if result is not None:
+                session['result'] = result
+            if error:
+                session['error'] = error
 
-# Заглушки для функций которые не реализованы
+
+def set_scan_process(scan_id: str, process):
+    with _scan_sessions_lock:
+        session = _scan_sessions.get(scan_id)
+        if session and session.get("active"):
+            session["process"] = process
+        elif process and process.returncode is None:
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
 
 
-def amass_scan(domain: str, mode: str = "passive", timeout: int = 180, reports_dir: str = None) -> dict:
-    """Заглушка для amass сканирования"""
-    return {
-        'status': 'completed',
-        'subdomains_count': 0,
-        'subdomains_sample': [],
-        'statistics': {},
-        'unique_ips': 0,
-        'scan_duration': 0,
-        'error': 'Amass не установлен на сервере'
+def normalize_tool_status(tool: str, result: dict, scan_active: bool) -> dict:
+    if not scan_active:
+        result["status"] = "cancelled"
+        result.setdefault("error", "Сканирование отменено")
+        return result
+
+    status_value = str(result.get("status", "")).lower()
+    error = result.get("error")
+    if error:
+        error_text = str(error).lower()
+        result["status"] = (
+            "timeout" if any(
+                marker in error_text for marker in ("timeout", "timed out", "таймаут")
+            )
+            else "error"
+        )
+        return result
+    if status_value in {"timeout", "timed_out"}:
+        result["status"] = "timeout"
+        return result
+    if status_value in {"cancelled", "canceled"}:
+        result["status"] = "cancelled"
+        return result
+    if status_value in {"error", "failed", "unavailable", "not_found"}:
+        result["status"] = "error"
+        return result
+    if status_value in {"no_findings", "no_results"}:
+        result["status"] = "no_findings"
+        return result
+
+    counts = {
+        "wappalyzer": result.get("technologies_found"),
+        "nuclei": result.get("count", result.get("total_findings")),
+        "amass": (result.get("data") or {}).get("subdomains_count"),
+        "scanner": result.get("count"),
+        "cors": result.get("count"),
+        "ssl-tls": result.get("count"),
+        "retire": result.get("vulnerabilities_count"),
+        "katana": result.get("count"),
+        "nmap": result.get("vulnerabilities"),
     }
+    count = counts.get(tool)
+    if count == 0:
+        result["status"] = "no_findings"
+    elif status_value in {"success", "completed"} or count is not None:
+        result["status"] = "success"
+    else:
+        result["status"] = "error"
+        result.setdefault("error", "Инструмент завершился без результата")
+    return result
+
+
+# Совместимость со старыми API и wrappers.
+
+
+def amass_scan(domain: str, mode: str = "passive", timeout: int = 180, reports_dir: str = None,
+               process_callback=None) -> dict:
+    """Запускает Amass и возвращает поддомены; недоступность инструмента не считается успехом."""
+    started = datetime.datetime.now()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as output:
+        output_path = output.name
+
+    try:
+        process = subprocess.Popen(
+            ["amass", "enum", "-d", domain, "-o", output_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if process_callback:
+            process_callback(process)
+        try:
+            _, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            process.communicate()
+            return {
+                "status": "timeout",
+                "error": f"Amass timed out after {timeout} seconds",
+                "subdomains_count": 0,
+                "subdomains_sample": [],
+            }
+        if process.returncode != 0:
+            return {
+                "status": "failed",
+                "error": stderr.strip() or f"Amass exited with code {process.returncode}",
+                "subdomains_count": 0,
+                "subdomains_sample": [],
+            }
+
+        with open(output_path, "r", encoding="utf-8") as result_file:
+            subdomains = sorted({line.strip() for line in result_file if line.strip()})
+        return {
+            "status": "completed",
+            "subdomains_count": len(subdomains),
+            "subdomains_sample": subdomains[:100],
+            "statistics": {},
+            "unique_ips": 0,
+            "scan_duration": (datetime.datetime.now() - started).total_seconds(),
+        }
+    except FileNotFoundError:
+        return {
+            "status": "unavailable",
+            "error": "Amass is not installed on the server",
+            "subdomains_count": 0,
+            "subdomains_sample": [],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "timeout",
+            "error": f"Amass timed out after {timeout} seconds",
+            "subdomains_count": 0,
+            "subdomains_sample": [],
+        }
+    finally:
+        if process_callback:
+            process_callback(None)
+        Path(output_path).unlink(missing_ok=True)
 
 
 def nuclei_simple_scan(url: str) -> list:
@@ -165,21 +345,36 @@ def nuclei_get_summary(results: list) -> dict:
     return get_summary(results)
 
 
-def nuclei_run_scan(target: str, save_reports: bool = False, reports_dir: str = None) -> list:
+def nuclei_run_scan(target: str, save_reports: bool = False, reports_dir: str = None, process_callback=None) -> list:
     """DEPRECATED: используйте scanners.nuclei_scanner.run_scan"""
     from scanners.nuclei_scanner import run_scan
-    result = run_scan(target, save_reports, reports_dir)
+    result = run_scan(target, save_reports, reports_dir, process_callback)
     return result
 
 
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:3000").split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health_check():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger.exception("Health check failed")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return {"status": "ok"}
 
 
 @app.post("/auth/register", response_model=schemas.UserResponse)
@@ -323,7 +518,7 @@ async def sse_stream_sublist3r(target: str):
         raise
 
 
-async def run_command(cmd: list):
+async def run_command(cmd: list, scan_id: str = None):
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -335,8 +530,14 @@ async def run_command(cmd: list):
     except NotImplementedError:
         return None, "async_subprocess_unsupported"
 
-    stdout, stderr = await proc.communicate()
-    return stdout.decode(errors="ignore"), stderr.decode(errors="ignore")
+    if scan_id:
+        set_scan_process(scan_id, proc)
+    try:
+        stdout, stderr = await proc.communicate()
+        return stdout.decode(errors="ignore"), stderr.decode(errors="ignore")
+    finally:
+        if scan_id:
+            set_scan_process(scan_id, None)
 
 
 # Функции сохранения отчетов (АСИНХРОННЫЕ версии)
@@ -352,9 +553,9 @@ async def save_scanner_report_async(scanner: VulnerabilityScanner) -> str:
     return str(json_path)
 
 
-async def save_whois_report_async(domain: str, output: str, error: str) -> dict:
+async def save_whois_report_async(domain: str, output: str, error: str, reports_base: Path = None) -> dict:
     """Асинхронно сохранить отчет whois в JSON и TXT в backend/reports/whois"""
-    reports_base = Path(__file__).parent / "reports"
+    reports_base = reports_base or Path(__file__).parent / "reports"
 
     # Создаем директории если нет
     whois_dir = reports_base / "whois"
@@ -429,9 +630,9 @@ async def save_whois_report_async(domain: str, output: str, error: str) -> dict:
     }
 
 
-async def save_nuclei_report_async(target: str, results: list) -> str:
+async def save_nuclei_report_async(target: str, results: list, reports_base: Path = None) -> str:
     """Асинхронно сохранить отчет nuclei в JSON в backend/reports/nuclei"""
-    reports_base = Path(__file__).parent / "reports"
+    reports_base = reports_base or Path(__file__).parent / "reports"
 
     # Создаем директории если нет
     nuclei_dir = reports_base / "nuclei"
@@ -463,9 +664,9 @@ async def save_nuclei_report_async(target: str, results: list) -> str:
     return result_path
 
 
-async def save_amass_report_async(target: str, results: dict) -> str:
+async def save_amass_report_async(target: str, results: dict, reports_base: Path = None) -> str:
     """Асинхронно сохранить отчет amass в JSON в backend/reports/amass"""
-    reports_base = Path(__file__).parent / "reports"
+    reports_base = reports_base or Path(__file__).parent / "reports"
 
     # Создаем директории если нет
     amass_dir = reports_base / "amass"
@@ -573,15 +774,12 @@ async def api_tool(
                 error = "Whois returned empty result"
                 logger.warning(f"WHOIS вернул пустой результат для {domain}")
 
-        except whois.parser.PywhoisError as e:
-            error = f"Whois parser error: {str(e)}"
-            logger.error(f"Ошибка парсера WHOIS: {error}")
         except Exception as e:
             error = f"Whois error: {str(e)}"
             logger.error(f"Ошибка WHOIS: {error}")
 
         # Сохраняем отчет асинхронно
-        await save_whois_report_async(domain, output, error)
+        await save_whois_report_async(domain, output, error, user_reports_dir(username))
 
         return {"tool": "whois", "output": output, "error": error}
 
@@ -596,7 +794,7 @@ async def api_tool(
 
         try:
             from scanners.nuclei_scanner import run_scan
-            reports_base = Path(__file__).parent / "reports"
+            reports_base = user_reports_dir(username)
             result = await asyncio.to_thread(run_scan, target_url, save_reports=True, reports_dir=str(reports_base))
             return {
                 "tool": "nuclei",
@@ -639,7 +837,7 @@ async def api_scanner(
         validate_target(target, allow_internal=allow_internal)
 
         # Определяем директорию для отчетов инструментов
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Создаем сканер
         scanner = VulnerabilityScanner(target, output_name, str(reports_base))
@@ -695,7 +893,8 @@ async def api_amass(
         False, description="Разрешить сканирование внутренних адресов"),
     timeout: int = Query(180, description="Таймаут в секундах"),
     selected_tools: str = Query(
-        "amass", description="Выбранные инструменты (comma-separated)")
+        "amass", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск Amass для перечисления поддоменов"""
     try:
@@ -703,11 +902,12 @@ async def api_amass(
 
         domain = extract_domain(target)
 
-        result = await asyncio.to_thread(amass_scan, domain, mode, timeout)
+        reports_base = user_reports_dir(username)
+        result = await asyncio.to_thread(amass_scan, domain, mode, timeout, str(reports_base))
 
         # Создаем объединённый отчет после сканирования
         scan_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        reports_base = Path(__file__).parent / "reports"
+        await save_amass_report_async(domain, result, reports_base)
         combined_report_paths = await asyncio.to_thread(
             create_combined_report,
             scan_id, reports_base, 10
@@ -715,6 +915,7 @@ async def api_amass(
 
         return {
             "tool": "amass",
+            "status": result.get("status", "failed"),
             "result": result,
             "combined_report": combined_report_paths
         }
@@ -752,7 +953,7 @@ async def api_nuclei(
 
         from scanners.nuclei_scanner import run_scan
 
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
         result = await asyncio.to_thread(run_scan, target, save_reports=True, reports_dir=str(reports_base))
 
         # Создаем объединённый отчет после сканирования
@@ -788,7 +989,8 @@ async def api_osint(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "osint", description="Выбранные инструменты (comma-separated)")
+        "osint", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск OSINT сканирования для поиска поддоменов и информации о домене"""
     try:
@@ -796,11 +998,11 @@ async def api_osint(
 
         domain = extract_domain(target)
 
-        result = await asyncio.to_thread(osint_scan, domain, Path(__file__).parent / "reports")
+        reports_base = user_reports_dir(username)
+        result = await asyncio.to_thread(osint_scan, domain, reports_base)
 
         # Создаем объединённый отчет после сканирования
         scan_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        reports_base = Path(__file__).parent / "reports"
         combined_report_paths = await asyncio.to_thread(
             create_combined_report,
             scan_id, reports_base, 10
@@ -826,7 +1028,8 @@ async def api_web(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "web", description="Выбранные инструменты (comma-separated)")
+        "web", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск Web сканирования (Katana, JSFinder, Gobuster) для поиска URL и директорий"""
     try:
@@ -836,7 +1039,7 @@ async def api_web(
         if not URL_RE.match(target):
             target = f"http://{target}"
 
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
         result = await asyncio.to_thread(web_scan, target, str(reports_base))
 
         # Создаем объединённый отчет после сканирования
@@ -868,7 +1071,8 @@ async def api_retire(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "retire", description="Выбранные инструменты (comma-separated)")
+        "retire", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск Retire для сканирования JavaScript библиотек на уязвимости"""
     try:
@@ -878,7 +1082,7 @@ async def api_retire(
         if not URL_RE.match(target):
             target = f"http://{target}"
 
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
         result = await asyncio.to_thread(retire_scan, target, str(reports_base))
 
         # Создаем объединённый отчет после сканирования
@@ -904,10 +1108,11 @@ async def api_retire(
 
 
 @app.get("/download_report")
-async def download_report(file_type: str = Query("docx", description="json или docx"), scan_id: str = Query(..., description="ID сканирования")):
+async def download_report(file_type: str = Query("docx", description="json или docx"), scan_id: str = Query(..., description="ID сканирования"),
+                          username: str = Depends(verify_token)):
     """Скачать отчет по типу и ID сканирования"""
     try:
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         if file_type == "docx":
             report_dir = reports_base / "word"
@@ -960,7 +1165,8 @@ async def wappalyzer_endpoint(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "wappalyzer", description="Выбранные инструменты (comma-separated)")
+        "wappalyzer", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """
     Анализ технологий на веб-сайте с помощью Wappalyzer
@@ -971,7 +1177,7 @@ async def wappalyzer_endpoint(
         validate_target(target, allow_internal=allow_internal)
 
         # Определяем директорию для отчетов
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Запускаем сканирование с сохранением отчетов
         result = await asyncio.to_thread(wappalyzer_scan, target, str(reports_base))
@@ -998,14 +1204,15 @@ async def wappalyzer_endpoint(
 
 
 @app.get("/wappalyzer/stream")
-async def wappalyzer_stream(target: str = Query(..., description="URL или домен для анализа"), allow_internal: bool = Query(False, description="Разрешить сканирование внутренних адресов")):
+async def wappalyzer_stream(target: str = Query(..., description="URL или домен для анализа"), allow_internal: bool = Query(False, description="Разрешить сканирование внутренних адресов"),
+                            username: str = Depends(verify_token)):
     """
     Анализ технологий с потоковым выводом результатов (SSE)
     """
     async def stream_wappalyzer():
         try:
             validate_target(target, allow_internal=allow_internal)
-            scanner = WappalyzerScanner(target)
+            scanner = WappalyzerScanner(target, str(user_reports_dir(username)))
 
             yield "data: {\"status\": \"Анализируем технологии...\"}\n\n"
 
@@ -1037,7 +1244,8 @@ async def api_cors(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "cors", description="Выбранные инструменты (comma-separated)")
+        "cors", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск CORS сканирования для выявления уязвимостей CORS"""
     try:
@@ -1047,7 +1255,7 @@ async def api_cors(
         if not URL_RE.match(target):
             target = f"http://{target}"
 
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Создаем и запускаем сканер
         scanner = CORSScanner(target, None, str(reports_base))
@@ -1089,7 +1297,8 @@ async def api_ssl_tls(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "ssl-tls", description="Выбранные инструменты (comma-separated)")
+        "ssl-tls", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск детального анализа SSL/TLS конфигурации"""
     try:
@@ -1097,7 +1306,7 @@ async def api_ssl_tls(
         validate_target(target, allow_internal=allow_internal)
 
         # Определяем директорию для отчетов
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Создаем SSL/TLS сканер
         scanner = SSLTLSScanner(target, reports_dir=str(reports_base))
@@ -1150,7 +1359,8 @@ async def api_dns(
     allow_internal: bool = Query(
         False, description="Разрешить сканирование внутренних адресов"),
     selected_tools: str = Query(
-        "dns", description="Выбранные инструменты (comma-separated)")
+        "dns", description="Выбранные инструменты (comma-separated)"),
+    username: str = Depends(verify_token)
 ):
     """Запуск DNS сканирования для перечисления DNS записей"""
     try:
@@ -1158,7 +1368,7 @@ async def api_dns(
         validate_target(target, allow_internal=allow_internal)
 
         # Определяем директорию для отчетов
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Запускаем DNS сканирование с сохранением отчетов
         result = await asyncio.to_thread(dns_scan, target, str(reports_base))
@@ -1187,13 +1397,17 @@ async def api_dns(
 
 
 @app.post("/api/cancel-scan")
-async def cancel_scan(scan_id: str = Query(..., description="ID сканирования для отмены")):
+async def cancel_scan(scan_id: str = Query(..., description="ID сканирования для отмены"),
+                      username: str = Depends(verify_token)):
     """Отменить активное сканирование по ID"""
     try:
         if not scan_id:
             raise HTTPException(
                 status_code=400, detail="Не указан ID сканирования")
 
+        session = get_scan_session(scan_id)
+        if session and session.get("username") != username:
+            raise HTTPException(status_code=404, detail="Сканирование не найдено")
         cancelled = cancel_scan_session(scan_id)
 
         if cancelled:
@@ -1217,12 +1431,13 @@ async def cancel_scan(scan_id: str = Query(..., description="ID сканиров
 
 
 @app.get("/api/scan-status")
-async def get_scan_status(scan_id: str = Query(..., description="ID сканирования")):
+async def get_scan_status(scan_id: str = Query(..., description="ID сканирования"),
+                          username: str = Depends(verify_token)):
     """Получить статус сканирования"""
     try:
         session = get_scan_session(scan_id)
 
-        if not session:
+        if not session or session.get("username") != username:
             return {
                 "status": "not_found",
                 "message": "Сканирование не найдено"
@@ -1233,15 +1448,53 @@ async def get_scan_status(scan_id: str = Query(..., description="ID сканир
             "scan_id": scan_id,
             "active": session['active'],
             "cancelled": session['cancelled'],
+            "scan_status": session.get('status', 'running'),
             "current_tool": session.get('current_tool'),
             "progress": session.get('progress', 0),
+            "completed_tools": session.get('completed_tools', 0),
+            "total_tools": session.get('total_tools', 0),
+            "error": session.get("error"),
             "start_time": session['start_time'].isoformat(),
-            "duration": (datetime.datetime.now() - session['start_time']).total_seconds()
+            "duration": (
+                (session.get('end_time') or datetime.datetime.now())
+                - session['start_time']
+            ).total_seconds(),
         }
 
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при получении статуса: {str(e)}")
+
+
+@app.get("/api/scan-results")
+async def get_scan_results(scan_id: str = Query(...), username: str = Depends(verify_token)):
+    session = get_scan_session(scan_id)
+    if not session or session.get("username") != username:
+        raise HTTPException(status_code=404, detail="Сканирование не найдено")
+    if session.get("result") is not None:
+        return session["result"]
+    if session.get("error"):
+        return {
+            "status": "error",
+            "scan_id": scan_id,
+            "target": session.get("target"),
+            "tools_executed": session.get("tools", []),
+            "tools_count": session.get("total_tools", 0),
+            "results": {},
+            "combined_reports": {},
+            "error": session["error"],
+        }
+    if session.get("cancelled"):
+        return {
+            "status": "cancelled",
+            "scan_id": scan_id,
+            "target": session.get("target"),
+            "tools_executed": session.get("tools", []),
+            "tools_count": session.get("total_tools", 0),
+            "results": {},
+            "combined_reports": {},
+        }
+    raise HTTPException(status_code=409, detail="Сканирование еще выполняется")
 
 
 @app.get("/api/nmap")
@@ -1262,7 +1515,7 @@ async def api_nmap(
         validate_target(target, allow_internal=allow_internal)
 
         # Определяем директорию для отчетов
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Создаем Nmap сканер
         scanner = NmapScanner(target, reports_dir=str(reports_base))
@@ -1312,6 +1565,81 @@ async def api_nmap(
             status_code=500, detail=f"Ошибка при Nmap сканировании: {str(e)}")
 
 
+async def _run_queued_scan(scan_id: str, target: str, tools: str,
+                           allow_internal: bool, username: str) -> None:
+    try:
+        async with _scan_queue_semaphore:
+            if not is_scan_active(scan_id):
+                end_scan_session(scan_id, "cancelled")
+                return
+            result = await run_selected_tools(
+                target=target,
+                tools=tools,
+                allow_internal=allow_internal,
+                scan_id=scan_id,
+                username=username,
+            )
+            end_scan_session(scan_id, result.get("status", "completed"), result)
+    except HTTPException as exc:
+        logger.error(
+            "Фоновое сканирование %s остановлено с HTTP %s: %s",
+            scan_id,
+            exc.status_code,
+            exc.detail,
+        )
+        end_scan_session(scan_id, "error", error=str(exc.detail))
+    except Exception as exc:
+        logger.exception(
+            "Непредвиденная ошибка фонового сканирования %s", scan_id
+        )
+        end_scan_session(scan_id, "error", error=str(exc))
+
+
+@app.post("/api/scans", status_code=202)
+async def enqueue_scan(
+    target: str = Query(...),
+    tools: str = Query(...),
+    allow_internal: bool = Query(False),
+    scan_id: str = Query(None),
+    username: str = Depends(verify_token),
+):
+    """Queue a scan and return immediately; use scan-status/scan-results to poll it."""
+    validate_target(target, allow_internal=allow_internal)
+    tools_list = [tool.strip().lower() for tool in tools.split(",") if tool.strip()]
+    if not tools_list:
+        raise HTTPException(status_code=400, detail="Не указаны инструменты для запуска")
+    invalid_tools = sorted(set(tools_list) - TOOL_IDS)
+    if invalid_tools:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Неизвестные инструменты: {', '.join(invalid_tools)}",
+        )
+    if not scan_id:
+        scan_id = str(uuid.uuid4())
+    else:
+        try:
+            scan_id = str(uuid.UUID(scan_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Некорректный ID сканирования") from exc
+
+    create_scan_session(
+        scan_id,
+        username,
+        scan_status="queued",
+        target=target,
+        tools=tools_list,
+    )
+    asyncio.create_task(_run_queued_scan(
+        scan_id, target, ",".join(tools_list), allow_internal, username
+    ))
+    return {
+        "status": "queued",
+        "scan_id": scan_id,
+        "progress": 0,
+        "tools": tools_list,
+    }
+
+
 @app.post("/api/run-selected-tools")
 async def run_selected_tools(
     target: str = Query(..., description="URL или домен для сканирования"),
@@ -1335,12 +1663,28 @@ async def run_selected_tools(
         JSON с результатами всех инструментов и путями к объединенному отчету
     """
     # Создаем сессию сканирования если указан scan_id
-    if scan_id:
-        create_scan_session(scan_id)
-        print(f"[*] Создана сессия сканирования: {scan_id}")
+    if not scan_id:
+        scan_id = str(uuid.uuid4())
     else:
-        scan_id = f"scan_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        create_scan_session(scan_id)
+        try:
+            scan_id = str(uuid.UUID(scan_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Некорректный ID сканирования") from exc
+    existing_session = get_scan_session(scan_id)
+    if existing_session and existing_session.get("status") == "queued":
+        if existing_session.get("username") != username:
+            raise HTTPException(status_code=404, detail="Сканирование не найдено")
+        with _scan_sessions_lock:
+            existing_session["status"] = "running"
+            existing_session["start_time"] = datetime.datetime.now()
+    else:
+        create_scan_session(
+            scan_id,
+            username,
+            target=target,
+            tools=[t.strip().lower() for t in tools.split(",") if t.strip()],
+        )
+    print(f"[*] Создана сессия сканирования: {scan_id}")
 
     try:
         # Проверяем отмену перед началом
@@ -1361,14 +1705,12 @@ async def run_selected_tools(
                 status_code=400, detail="Не указаны инструменты для запуска")
 
         # Валидируем инструменты
-        available_tools = ['wappalyzer', 'nuclei', 'katana',
-                           'amass', 'scanner', 'whois', 'osint', 'web', 'retire', 'cors', 'ssl-tls', 'dns', 'nmap']
-        invalid_tools = [t for t in tools_list if t not in available_tools]
+        invalid_tools = [t for t in tools_list if t not in TOOL_IDS]
         if invalid_tools:
             raise HTTPException(
                 status_code=400, detail=f"Неизвестные инструменты: {', '.join(invalid_tools)}")
 
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
         results = {}
 
         # Запускаем каждый инструмент
@@ -1387,7 +1729,13 @@ async def run_selected_tools(
                 # Обновляем текущий инструмент
                 with _scan_sessions_lock:
                     if scan_id in _scan_sessions:
-                        _scan_sessions[scan_id]['current_tool'] = tool
+                        session = _scan_sessions[scan_id]
+                        session['current_tool'] = tool
+                        session['status'] = 'running'
+                        total_tools = max(1, len(tools_list))
+                        session['progress'] = int(
+                            session.get('completed_tools', 0) * 95 / total_tools
+                        )
 
                 print(f"[*] Запускаем {tool}...")
 
@@ -1400,11 +1748,13 @@ async def run_selected_tools(
                     }
 
                 elif tool == 'nuclei':
-                    result = await asyncio.to_thread(nuclei_run_scan, target, True, str(reports_base))
+                    process_callback = lambda process: set_scan_process(scan_id, process)
+                    result = await asyncio.to_thread(
+                        nuclei_run_scan, target, True, str(reports_base), process_callback)
                     json_path = await save_nuclei_report_async(
-                        target, result if isinstance(result, list) else [])
+                        target, result if isinstance(result, list) else [], reports_base)
                     results[tool] = {
-                        'status': 'success',
+                        'status': 'cancelled' if not is_scan_active(scan_id) else 'success',
                         'data': result,
                         'count': len(result) if isinstance(result, list) else result.get('total_findings', 0),
                         'reports': {
@@ -1415,8 +1765,13 @@ async def run_selected_tools(
                 elif tool == 'katana':
                     # Используем командную строку для katana
                     cmd = ["katana", "-u", target, "-json", "-silent"]
-                    stdout, stderr = await run_command(cmd)
-                    if stdout:
+                    stdout, stderr = await run_command(cmd, scan_id)
+                    if stdout is None:
+                        results[tool] = {
+                            'status': 'error',
+                            'error': f"Не удалось запустить Katana: {stderr}"
+                        }
+                    elif stdout:
                         try:
                             katana_data = [json.loads(
                                 line) for line in stdout.strip().split('\n') if line]
@@ -1438,10 +1793,12 @@ async def run_selected_tools(
                         }
 
                 elif tool == 'amass':
-                    result = await asyncio.to_thread(amass_scan, target, "passive", 300, str(reports_base))
-                    json_path = await save_amass_report_async(target, result)
+                    process_callback = lambda process: set_scan_process(scan_id, process)
+                    result = await asyncio.to_thread(
+                        amass_scan, target, "passive", 300, str(reports_base), process_callback)
+                    json_path = await save_amass_report_async(target, result, reports_base)
                     results[tool] = {
-                        'status': 'success',
+                        'status': result.get('status', 'failed'),
                         'data': result,
                         'reports': {
                             'json': json_path
@@ -1486,14 +1843,11 @@ async def run_selected_tools(
                     except ImportError:
                         error = "python-whois library not installed"
                         logger.error(error)
-                    except whois.parser.PywhoisError as e:
-                        error = f"Whois parser error: {str(e)}"
-                        logger.error(error)
                     except Exception as e:
                         error = f"Whois error: {str(e)}"
                         logger.error(error)
 
-                    reports = await save_whois_report_async(domain, output, error)
+                    reports = await save_whois_report_async(domain, output, error, reports_base)
                     results[tool] = {
                         'status': 'success' if output else 'warning',
                         'output': output,
@@ -1600,26 +1954,114 @@ async def run_selected_tools(
                         }
 
               
+                if tool in results:
+                    results[tool] = normalize_tool_status(
+                        tool, results[tool], is_scan_active(scan_id))
+                with _scan_sessions_lock:
+                    session = _scan_sessions.get(scan_id)
+                    if session:
+                        session['completed_tools'] = len(results)
+                        session['progress'] = int(len(results) * 95 / max(1, len(tools_list)))
+                if not is_scan_active(scan_id):
+                    results[tool] = {
+                        'status': 'cancelled',
+                        'error': 'Сканирование было отменено'
+                    }
+                    break
             except Exception as e:
                 results[tool] = {
-                    'status': 'error',
+                    'status': 'timeout' if isinstance(e, (TimeoutError, subprocess.TimeoutExpired)) or "timed out" in str(e).lower() else 'error',
                     'error': str(e)
                 }
 
-        # Создаем объединенный отчет (используем существующий scan_id)
-        try:
-            combined_reports = create_combined_report(
-            scan_id, reports_base, recent_minutes=10)
-        except Exception as e:
-            logger.error(f"Ошибка создания combined отчета: {e}", exc_info=True)
-            combined_reports = {}
+        cancelled = not is_scan_active(scan_id)
+        tool_statuses = {item.get("status") for item in results.values()}
+        if cancelled:
+            scan_status = "cancelled"
+        elif "timeout" in tool_statuses:
+            scan_status = "timeout"
+        elif "error" in tool_statuses:
+            scan_status = "error"
+        else:
+            scan_status = "success"
+        combined_reports = {}
+        if not cancelled:
+            combined_dir = reports_base / "combined"
+            combined_payload = {
+                "scan_id": scan_id,
+                "target": target,
+                "status": scan_status,
+                "created_at": datetime.datetime.now().isoformat(),
+                "tools_executed": tools_list,
+                "tools_count": len(tools_list),
+                "results": results,
+                "normalized_findings": normalize_findings(results),
+            }
+            filename_base = f"combined_report_{scan_id}"
+            json_path = combined_dir / "json" / f"{filename_base}.json"
+            txt_path = combined_dir / "txt" / f"{filename_base}.txt"
+            markdown_path = combined_dir / "md" / f"{filename_base}.md"
+            json_path.parent.mkdir(parents=True, exist_ok=True)
+            txt_path.parent.mkdir(parents=True, exist_ok=True)
+            markdown_path.parent.mkdir(parents=True, exist_ok=True)
+            json_path.write_text(
+                json.dumps(combined_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+            tool_lines = [
+                f"- {tool}: {result.get('status', 'unknown')}"
+                + (f" — {result['error']}" if result.get("error") else "")
+                for tool, result in results.items()
+            ]
+            txt_path.write_text(
+                "\n".join(
+                    [
+                        "CYBERSCOPE SCAN REPORT",
+                        "=" * 40,
+                        f"Target: {target}",
+                        f"Scan ID: {scan_id}",
+                        f"Overall status: {scan_status}",
+                        "",
+                        "Tool results:",
+                        *(tool_lines or ["- No tool results"]),
+                        "",
+                        "Full results:",
+                        json.dumps(results, ensure_ascii=False, indent=2),
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            markdown_path.write_text(
+                render_markdown_report(combined_payload),
+                encoding="utf-8",
+            )
+            docx_path = CombinedReport(
+                scan_id, reports_base
+            ).txt_to_docx(str(txt_path))
+            if not docx_path:
+                logger.error("Не удалось создать DOCX отчет для сканирования %s", scan_id)
+
+            combined_reports = {
+                "json": str(json_path),
+                "txt": str(txt_path),
+                "docx": docx_path,
+                "md": str(markdown_path),
+            }
 
         # Завершаем сессию сканирования
-        end_scan_session(scan_id)
+        end_scan_session(scan_id, scan_status)
+        with _scan_sessions_lock:
+            session = _scan_sessions.get(scan_id)
+            if session:
+                session['progress'] = 100 if not cancelled else session.get('progress', 0)
+                session['current_tool'] = None
+                session['completed_tools'] = len(results)
         print(f"[+] Сканирование {scan_id} завершено успешно")
 
         return {
-            'status': 'success',
+            'status': scan_status,
             'target': target,
             'tools_executed': tools_list,
             'tools_count': len(tools_list),
@@ -1628,22 +2070,22 @@ async def run_selected_tools(
             'scan_id': scan_id
         }
 
-    except HTTPException:
-        end_scan_session(scan_id)
+    except HTTPException as exc:
+        end_scan_session(scan_id, "error", error=str(exc.detail))
         raise
     except Exception as e:
-        end_scan_session(scan_id)
+        end_scan_session(scan_id, "error", error=str(e))
         raise HTTPException(
             status_code=500, detail=f"Ошибка при запуске инструментов: {str(e)}")
 
 
 @app.get("/api/txt-reports")
-async def get_txt_reports():
+async def get_txt_reports(username: str = Depends(verify_token)):
     """
     Получить список всех файлов .txt из папки reports для всех инструментов
     """
     try:
-        reports_dir = Path(__file__).parent / "reports"
+        reports_dir = user_reports_dir(username)
 
         if not reports_dir.exists():
             return {"reports": [], "message": "Папка не найдена"}
@@ -1675,7 +2117,8 @@ async def get_txt_reports():
 
 
 @app.get("/api/download-word-report")
-async def download_word_report(filename: str = Query(..., description="Имя файла для скачивания")):
+async def download_word_report(filename: str = Query(..., description="Имя файла для скачивания"),
+                               username: str = Depends(verify_token)):
     """
     Скачать файл .docx из папки reports/combined/word
     """
@@ -1685,7 +2128,7 @@ async def download_word_report(filename: str = Query(..., description="Имя ф
             raise HTTPException(
                 status_code=400, detail="Недопустимое имя файла")
 
-        file_path = Path(__file__).parent / "reports" / \
+        file_path = user_reports_dir(username) / \
             "combined" / "word" / filename
 
         if not file_path.exists() or not file_path.suffix.lower() == ".docx":
@@ -1704,7 +2147,8 @@ async def download_word_report(filename: str = Query(..., description="Имя ф
 
 
 @app.get("/api/download-txt-report")
-async def download_txt_report(tool: str = Query(..., description="Название инструмента"), filename: str = Query(..., description="Имя файла для скачивания")):
+async def download_txt_report(tool: str = Query(..., description="Название инструмента"), filename: str = Query(..., description="Имя файла для скачивания"),
+                              username: str = Depends(verify_token)):
     """
     Скачать файл .txt из папки reports/[tool]/txt
     """
@@ -1714,7 +2158,7 @@ async def download_txt_report(tool: str = Query(..., description="Названи
             raise HTTPException(
                 status_code=400, detail="Недопустимое имя файла")
 
-        file_path = Path(__file__).parent / "reports" / tool / "txt" / filename
+        file_path = user_reports_dir(username) / tool / "txt" / filename
 
         if not file_path.exists() or not file_path.suffix.lower() == ".txt":
             raise HTTPException(status_code=404, detail="Файл не найден")
@@ -1732,13 +2176,14 @@ async def download_txt_report(tool: str = Query(..., description="Названи
 
 
 @app.delete("/api/delete-word-report")
-async def delete_word_report(filename: str = Query(None, description="Имя файла для удаления")):
+async def delete_word_report(filename: str = Query(None, description="Имя файла для удаления"),
+                             username: str = Depends(verify_token)):
     """
     Удалить файл .docx из папки reports/combined/word
     Если filename не указан, удаляет все word-отчеты
     """
     try:
-        word_dir = Path(__file__).parent / "reports" / "combined" / "word"
+        word_dir = user_reports_dir(username) / "combined" / "word"
 
         if not word_dir.exists():
             raise HTTPException(
@@ -1782,7 +2227,8 @@ async def delete_word_report(filename: str = Query(None, description="Имя ф�
 
 
 @app.delete("/api/delete-txt-report")
-async def delete_txt_report(tool: str = Query(..., description="Название инструмента"), filename: str = Query(None, description="Имя файла для удаления")):
+async def delete_txt_report(tool: str = Query(..., description="Название инструмента"), filename: str = Query(None, description="Имя файла для удаления"),
+                            username: str = Depends(verify_token)):
     """
     Удалить файл .txt из папки reports/[tool]/txt
     Если filename не указан, удаляет все файлы инструмента
@@ -1793,7 +2239,7 @@ async def delete_txt_report(tool: str = Query(..., description="Название
             raise HTTPException(
                 status_code=400, detail="Недопустимое имя инструмента")
 
-        reports_dir = Path(__file__).parent / "reports" / tool / "txt"
+        reports_dir = user_reports_dir(username) / tool / "txt"
 
         if not reports_dir.exists():
             raise HTTPException(
@@ -1836,66 +2282,134 @@ async def delete_txt_report(tool: str = Query(..., description="Название
 
 
 @app.get("/api/combined-reports")
-async def get_combined_reports():
+async def get_combined_reports(username: str = Depends(verify_token)):
     """
     Получить список всех скомпилированных отчетов из папки combined
     """
     try:
-        reports_dir = Path(__file__).parent / "reports" / "combined"
+        reports_dir = user_reports_dir(username) / "combined"
 
         if not reports_dir.exists():
             return {
                 "status": "success",
                 "json_reports": [],
                 "txt_reports": [],
+                "md_reports": [],
                 "word_reports": [],
                 "count": 0,
                 "message": "Папка не найдена"
             }
 
-        # Получаем все JSON файлы из папки combined/json
+        def list_reports(directory: Path, pattern: str) -> list[str]:
+            if not directory.exists():
+                return []
+            return [
+                path.name
+                for path in sorted(
+                    directory.glob(pattern),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )
+            ]
+
+        # Newest reports come first so the UI can restore the latest scan.
         json_dir = reports_dir / "json"
-        if json_dir.exists():
-            json_files = sorted(
-                [f.name for f in json_dir.glob("*.json")], reverse=True)
-        else:
-            json_files = []
+        json_files = list_reports(json_dir, "*.json")
 
-        # Получаем все TXT файлы из папки combined/txt
         txt_dir = reports_dir / "txt"
-        if txt_dir.exists():
-            txt_files = sorted(
-                [f.name for f in txt_dir.glob("*.txt")], reverse=True)
-        else:
-            txt_files = []
+        txt_files = list_reports(txt_dir, "*.txt")
 
-        # Получаем все DOCX файлы из папки combined/word
+        md_dir = reports_dir / "md"
+        md_files = list_reports(md_dir, "*.md")
+
         word_dir = reports_dir / "word"
-        if word_dir.exists():
-            word_files = sorted(
-                [f.name for f in word_dir.glob("*.docx")], reverse=True)
-        else:
-            word_files = []
+        word_files = list_reports(word_dir, "*.docx")
 
         return {
             "status": "success",
             "json_reports": json_files,
             "txt_reports": txt_files,
+            "md_reports": md_files,
             "word_reports": word_files,
-            "count": len(json_files) + len(txt_files) + len(word_files)
+            "count": len(json_files) + len(txt_files) + len(md_files) + len(word_files)
         }
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Ошибка при получении списка отчетов: {str(e)}")
 
 
+@app.get("/api/compare-scans")
+async def compare_scans(
+    baseline_scan_id: str = Query(...),
+    current_scan_id: str = Query(...),
+    username: str = Depends(verify_token),
+):
+    if baseline_scan_id == current_scan_id:
+        raise HTTPException(status_code=400, detail="Выберите два разных сканирования")
+    try:
+        uuid.UUID(baseline_scan_id)
+        uuid.UUID(current_scan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Некорректный ID сканирования") from exc
+
+    reports_dir = user_reports_dir(username) / "combined" / "json"
+
+    def load_scan(scan_id: str) -> dict:
+        report_path = reports_dir / f"combined_report_{scan_id}.json"
+        if not report_path.is_file():
+            raise HTTPException(status_code=404, detail=f"Отчет сканирования {scan_id} не найден")
+        try:
+            return json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("Не удалось прочитать отчет %s: %s", report_path, exc)
+            raise HTTPException(status_code=500, detail="Не удалось прочитать отчет сканирования") from exc
+
+    baseline = load_scan(baseline_scan_id)
+    current = load_scan(current_scan_id)
+    if baseline.get("target") != current.get("target"):
+        raise HTTPException(status_code=400, detail="Сравнивать можно только сканирования одной цели")
+
+    def to_map(report: dict) -> dict[str, dict]:
+        findings = report.get("normalized_findings")
+        if not isinstance(findings, list):
+            findings = normalize_findings(report.get("results", {}))
+        return {
+            item["fingerprint"]: item
+            for item in findings
+            if isinstance(item, dict) and item.get("fingerprint")
+        }
+
+    baseline_findings = to_map(baseline)
+    current_findings = to_map(current)
+    added_ids = current_findings.keys() - baseline_findings.keys()
+    removed_ids = baseline_findings.keys() - current_findings.keys()
+    unchanged_ids = current_findings.keys() & baseline_findings.keys()
+    added = [current_findings[key] for key in sorted(added_ids)]
+    removed = [baseline_findings[key] for key in sorted(removed_ids)]
+    unchanged = [current_findings[key] for key in sorted(unchanged_ids)]
+    return {
+        "status": "success",
+        "target": current.get("target"),
+        "baseline_scan_id": baseline_scan_id,
+        "current_scan_id": current_scan_id,
+        "summary": {
+            "added": len(added),
+            "removed": len(removed),
+            "unchanged": len(unchanged),
+        },
+        "added": added,
+        "removed": removed,
+        "unchanged": unchanged,
+    }
+
+
 @app.get("/api/word-reports")
-async def get_word_reports():
+async def get_word_reports(username: str = Depends(verify_token)):
     """
     Получить список всех word-отчетов из папки combined/word
     """
     try:
-        word_dir = Path(__file__).parent / "reports" / "combined" / "word"
+        word_dir = user_reports_dir(username) / "combined" / "word"
 
         if not word_dir.exists():
             return {
@@ -1924,7 +2438,8 @@ async def get_word_reports():
 
 
 @app.get("/api/download-combined-report")
-async def download_combined_report(filename: str = Query(..., description="Имя файла для скачивания"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx")):
+async def download_combined_report(filename: str = Query(..., description="Имя файла для скачивания"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx"),
+                                   username: str = Depends(verify_token)):
     """
     Скачать скомпилированный отчет из папки combined
     """
@@ -1935,21 +2450,28 @@ async def download_combined_report(filename: str = Query(..., description="Им�
                 status_code=400, detail="Недопустимое имя файла")
 
         if report_type == "json":
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "json" / filename
             if not file_path.suffix.lower() == ".json":
                 raise HTTPException(
                     status_code=400, detail="Неверный тип файла")
             media_type = "application/json"
         elif report_type == "txt":
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "txt" / filename
             if not file_path.suffix.lower() == ".txt":
                 raise HTTPException(
                     status_code=400, detail="Неверный тип файла")
             media_type = "text/plain"
+        elif report_type in ["md", "markdown"]:
+            file_path = user_reports_dir(username) / \
+                "combined" / "md" / filename
+            if not file_path.suffix.lower() == ".md":
+                raise HTTPException(
+                    status_code=400, detail="Неверный тип файла")
+            media_type = "text/markdown; charset=utf-8"
         elif report_type in ["word", "docx"]:
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "word" / filename
             if not file_path.suffix.lower() == ".docx":
                 raise HTTPException(
@@ -1975,7 +2497,8 @@ async def download_combined_report(filename: str = Query(..., description="Им�
 
 
 @app.delete("/api/delete-combined-report")
-async def delete_combined_report(filename: str = Query(..., description="Имя файла для удаления"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx")):
+async def delete_combined_report(filename: str = Query(..., description="Имя файла для удаления"), report_type: str = Query("json", description="Тип отчета: json, txt, word или docx"),
+                                 username: str = Depends(verify_token)):
     """
     Удалить скомпилированный отчет из папки combined
     """
@@ -1986,17 +2509,31 @@ async def delete_combined_report(filename: str = Query(..., description="Имя 
                 status_code=400, detail="Недопустимое имя файла")
 
         if report_type == "json":
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "json" / filename
         elif report_type == "txt":
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "txt" / filename
         elif report_type in ["word", "docx"]:
-            file_path = Path(__file__).parent / "reports" / \
+            file_path = user_reports_dir(username) / \
                 "combined" / "word" / filename
+        elif report_type in ["md", "markdown"]:
+            file_path = user_reports_dir(username) / \
+                "combined" / "md" / filename
         else:
             raise HTTPException(
                 status_code=400, detail="Неизвестный тип отчета")
+
+        expected_suffix = {
+            "json": ".json",
+            "txt": ".txt",
+            "word": ".docx",
+            "docx": ".docx",
+            "md": ".md",
+            "markdown": ".md",
+        }[report_type]
+        if file_path.suffix.lower() != expected_suffix:
+            raise HTTPException(status_code=400, detail="Неверный тип файла")
 
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Файл не найден")
@@ -2017,12 +2554,12 @@ async def delete_combined_report(filename: str = Query(..., description="Имя 
 
 
 @app.delete("/api/clear-all-reports")
-async def clear_all_reports():
+async def clear_all_reports(username: str = Depends(verify_token)):
     """
     Очистить ВСЕ отчеты (word, json, combined)
     """
     try:
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         if not reports_base.exists():
             return {
@@ -2034,43 +2571,14 @@ async def clear_all_reports():
         deleted_count = 0
         deleted_files = []
 
-        # Удаляем отчеты из папок: txt, json, combined/txt, combined/json и других инструментов
-        dirs_to_clear = [
-            reports_base / "txt",
-            reports_base / "json",
-            reports_base / "combined" / "json",
-            reports_base / "combined" / "txt",
-            reports_base / "combined" / "word",
-            reports_base / "nuclei" / "json",
-            reports_base / "nuclei" / "txt",
-            reports_base / "wappalyzer" / "json",
-            reports_base / "wappalyzer" / "txt",
-            reports_base / "amass" / "json",
-            reports_base / "amass" / "txt",
-            reports_base / "whois" / "json",
-            reports_base / "whois" / "txt",
-            reports_base / "osint" / "json",
-            reports_base / "osint" / "txt",
-            reports_base / "scanner" / "json",
-            reports_base / "scanner" / "txt",
-            reports_base / "web" / "json",
-            reports_base / "web" / "txt",
-            reports_base / "cors" / "json",
-            reports_base / "cors" / "txt",
-            reports_base / "nmap" / "json",
-            reports_base / "nmap" / "txt",
-            reports_base / "word",
-        ]
-
-        for dir_path in dirs_to_clear:
-            if dir_path.exists() and dir_path.is_dir():
-                for file in dir_path.glob("*.*"):
-                    try:
-                        file.unlink()
-                        deleted_files.append(file.name)
-                        deleted_count += 1
-                    except Exception as e:
-                        print(f"[-] Ошибка удаления файла {file}: {e}")
+        for file_path in reports_base.rglob("*"):
+            if file_path.is_file():
+                try:
+                    file_path.unlink()
+                    deleted_files.append(file_path.name)
+                    deleted_count += 1
+                except OSError as e:
+                    logger.error("Не удалось удалить отчет %s: %s", file_path, e)
 
         return {
             "status": "success",
@@ -2086,12 +2594,21 @@ async def clear_all_reports():
 
 # Получиваем глобальный экземпляр планировщика
 scheduler = get_scheduler(Path(__file__).parent)
+_scan_queue_semaphore = asyncio.Semaphore(
+    max(1, int(os.getenv("MAX_CONCURRENT_SCANS", "1")))
+)
 
 
 @app.on_event("startup")
 async def startup_events():
     """Инициализация при запуске приложения"""
+    global _scan_queue_semaphore
+    _scan_queue_semaphore = asyncio.Semaphore(
+        max(1, int(os.getenv("MAX_CONCURRENT_SCANS", "1")))
+    )
     logger.info("🚀 Запуск приложения...")
+
+    await _register_scan_callbacks()
 
     # Запускаем планировщик
     scheduler.start()
@@ -2107,10 +2624,11 @@ async def shutdown_events():
 
 
 @app.get("/api/tasks")
-async def get_tasks():
+async def get_tasks(username: str = Depends(verify_token)):
     """Получить список всех запланированных задач"""
     try:
-        tasks = scheduler.get_tasks()
+        tasks = [task for task in scheduler.get_tasks()
+                 if task.get("username") == username]
         return {
             "status": "success",
             "tasks": tasks,
@@ -2121,12 +2639,18 @@ async def get_tasks():
             status_code=500, detail=f"Ошибка при получении задач: {str(e)}")
 
 
+@app.get("/api/tools")
+async def list_tools(username: str = Depends(verify_token)):
+    """List runnable scanners and their current local dependency availability."""
+    return {"status": "success", "tools": get_tool_catalog()}
+
+
 @app.get("/api/tasks/{task_id}")
-async def get_task(task_id: str):
+async def get_task(task_id: str, username: str = Depends(verify_token)):
     """Получить конкретную задачу по ID"""
     try:
         task = scheduler.get_task(task_id)
-        if not task:
+        if not task or task.get("username") != username:
             raise HTTPException(status_code=404, detail="Задача не найдена")
 
         return {
@@ -2141,7 +2665,7 @@ async def get_task(task_id: str):
 
 
 @app.post("/api/tasks")
-async def create_task(task: dict):
+async def create_task(task: dict, username: str = Depends(verify_token)):
     """Создать новую запланированную задачу"""
     try:
         # Валидация обязательных полей
@@ -2153,17 +2677,43 @@ async def create_task(task: dict):
                     detail=f"Отсутствует обязательное поле: {field}")
 
         # Валидация query
-        query = task.get('query', '').strip()
-        if not query:
+        query_value = task.get("query")
+        if not isinstance(query_value, str) or not query_value.strip():
             raise HTTPException(
                 status_code=400,
                 detail="Цель сканирования не может быть пустой")
+        query = query_value.strip()
 
         # Валидация инструментов
-        if not task.get('activeTools') or not isinstance(task['activeTools'], list):
+        active_tools = task.get("activeTools")
+        if not isinstance(active_tools, list) or not active_tools:
             raise HTTPException(
                 status_code=400,
                 detail="Должен быть выбран хотя бы один инструмент")
+        if any(not isinstance(tool, str) for tool in active_tools):
+            raise HTTPException(
+                status_code=400,
+                detail="Некорректный список инструментов",
+            )
+        active_tools = list(dict.fromkeys(
+            tool.strip().lower() for tool in active_tools
+        ))
+        if not active_tools or any(not tool for tool in active_tools):
+            raise HTTPException(
+                status_code=400,
+                detail="Должен быть выбран хотя бы один инструмент",
+            )
+        invalid_tools = sorted(set(active_tools) - SCHEDULED_TOOL_IDS)
+        if invalid_tools:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Инструменты не поддерживаются планировщиком: {', '.join(invalid_tools)}",
+            )
+
+        task["username"] = username
+        task["query"] = query
+        task["activeTools"] = active_tools
+        task.pop("id", None)
 
         # Регистрируем callbacks для инструментов если они еще не зарегистрированы
         await _register_scan_callbacks()
@@ -2188,14 +2738,43 @@ async def create_task(task: dict):
 
 
 @app.put("/api/tasks/{task_id}")
-async def update_task(task_id: str, task_data: dict):
+async def update_task(task_id: str, task_data: dict, username: str = Depends(verify_token)):
     """Обновить запланированную задачу"""
     try:
         existing_task = scheduler.get_task(task_id)
-        if not existing_task:
+        if not existing_task or existing_task.get("username") != username:
             raise HTTPException(status_code=404, detail="Задача не найдена")
 
+        if "activeTools" in task_data:
+            active_tools = task_data["activeTools"]
+            if not isinstance(active_tools, list) or not active_tools:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Должен быть выбран хотя бы один инструмент",
+                )
+            if any(not isinstance(tool, str) for tool in active_tools):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Некорректный список инструментов",
+                )
+            active_tools = list(dict.fromkeys(
+                tool.strip().lower() for tool in active_tools
+            ))
+            if not active_tools or any(not tool for tool in active_tools):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Должен быть выбран хотя бы один инструмент",
+                )
+            invalid_tools = sorted(set(active_tools) - SCHEDULED_TOOL_IDS)
+            if invalid_tools:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Инструменты не поддерживаются планировщиком: {', '.join(invalid_tools)}",
+                )
+            task_data["activeTools"] = active_tools
+
         # Обновляем задачу
+        task_data.pop("username", None)
         scheduler.update_task(task_id, task_data)
 
         logger.info(f"✓ Задача обновлена: {task_id}")
@@ -2213,12 +2792,13 @@ async def update_task(task_id: str, task_data: dict):
 
 
 @app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: str):
+async def delete_task(task_id: str, username: str = Depends(verify_token)):
     """Удалить запланированную задачу"""
     try:
-        removed = scheduler.remove_task(task_id)
-        if not removed:
+        task = scheduler.get_task(task_id)
+        if not task or task.get("username") != username:
             raise HTTPException(status_code=404, detail="Задача не найдена")
+        removed = scheduler.remove_task(task_id)
 
         logger.info(f"✓ Задача удалена: {task_id}")
 
@@ -2235,11 +2815,11 @@ async def delete_task(task_id: str):
 
 
 @app.get("/api/task-results/{task_id}")
-async def get_task_results(task_id: str):
+async def get_task_results(task_id: str, username: str = Depends(verify_token)):
     """Получить результаты сканирования для задачи"""
     try:
         task = scheduler.get_task(task_id)
-        if not task:
+        if not task or task.get("username") != username:
             raise HTTPException(status_code=404, detail="Задача не найдена")
 
         # Возвращаем информацию о последнем сканировании
@@ -2248,7 +2828,7 @@ async def get_task_results(task_id: str):
             "task_id": task_id,
             "task_type": task.get('type'),
             "target": task.get('query'),
-            "tools": task.get('tools', []),
+            "tools": task.get('activeTools', []),
             "last_scan_folder": task.get('last_scan_folder'),
             "last_scan_time": task.get('last_scan_time'),
             "scan_results": task.get('scan_results', []),
@@ -2267,14 +2847,13 @@ async def _register_scan_callbacks():
     """Зарегистрировать callbacks для всех инструментов"""
 
     # === SCANNER ===
-    async def callback_scanner(target, allow_internal=False, task_id=None):
+    async def callback_scanner(target, allow_internal=False, task_id=None, username=None):
         """Callback для VulnerabilityScanner"""
         try:
             logger.info(f"🔄 Запуск scanner для {target}")
             from scanners.vulnerability_scanner import VulnerabilityScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = VulnerabilityScanner(target, reports_dir)
             scanner.scan()
             # Сохраняем оба формата отчётов
@@ -2283,44 +2862,44 @@ async def _register_scan_callbacks():
             logger.info(f"✓ scanner завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске scanner: {e}", exc_info=True)
+            raise
 
     # === NUCLEI ===
-    async def callback_nuclei(target, allow_internal=False, task_id=None):
+    async def callback_nuclei(target, allow_internal=False, task_id=None, username=None):
         """Callback для Nuclei сканера"""
         try:
             logger.info(f"🔄 Запуск nuclei для {target}")
             from scanners.nuclei_scanner import run_scan
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             result = await run_scan(target, save_reports=True, reports_dir=reports_dir)
             logger.info(f"✓ nuclei завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске nuclei: {e}", exc_info=True)
+            raise
 
     # === OSINT ===
-    async def callback_osint(target, allow_internal=False, task_id=None):
+    async def callback_osint(target, allow_internal=False, task_id=None, username=None):
         """Callback для OSINT сканера"""
         try:
             logger.info(f"🔄 Запуск osint для {target}")
             from scanners.osint_scanner import simple_scan
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             result = simple_scan(target, reports_dir)
             logger.info(f"✓ osint завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске osint: {e}", exc_info=True)
+            raise
 
     # === WAPPALYZER ===
-    async def callback_wappalyzer(target, allow_internal=False, task_id=None):
+    async def callback_wappalyzer(target, allow_internal=False, task_id=None, username=None):
         """Callback для Wappalyzer"""
         try:
             logger.info(f"🔄 Запуск wappalyzer для {target}")
             from scanners.wappalyzer_scanner import WappalyzerScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = WappalyzerScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2331,16 +2910,16 @@ async def _register_scan_callbacks():
         except Exception as e:
             logger.error(
                 f"✗ Ошибка при запуске wappalyzer: {e}", exc_info=True)
+            raise
 
     # === SSL-TLS ===
-    async def callback_ssl_tls(target, allow_internal=False, task_id=None):
+    async def callback_ssl_tls(target, allow_internal=False, task_id=None, username=None):
         """Callback для SSL/TLS сканера"""
         try:
             logger.info(f"🔄 Запуск ssl-tls для {target}")
             from scanners.ssl_tls_scanner import SSLTLSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = SSLTLSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2350,16 +2929,16 @@ async def _register_scan_callbacks():
             logger.info(f"✓ ssl-tls завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске ssl-tls: {e}", exc_info=True)
+            raise
 
     # === NMAP ===
-    async def callback_nmap(target, allow_internal=False, task_id=None):
+    async def callback_nmap(target, allow_internal=False, task_id=None, username=None):
         """Callback для Nmap сканера"""
         try:
             logger.info(f"🔄 Запуск nmap для {target}")
             from scanners.nmap_scanner import NmapScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = NmapScanner(target, reports_dir,
                                   allow_internal=allow_internal)
             scanner.scan()
@@ -2370,16 +2949,16 @@ async def _register_scan_callbacks():
             logger.info(f"✓ nmap завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске nmap: {e}", exc_info=True)
+            raise
 
     # === CORS ===
-    async def callback_cors(target, allow_internal=False, task_id=None):
+    async def callback_cors(target, allow_internal=False, task_id=None, username=None):
         """Callback для CORS сканера"""
         try:
             logger.info(f"🔄 Запуск cors для {target}")
             from scanners.cors_scanner import CORSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = CORSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2389,16 +2968,16 @@ async def _register_scan_callbacks():
             logger.info(f"✓ cors завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске cors: {e}", exc_info=True)
+            raise
 
     # === DNS ===
-    async def callback_dns(target, allow_internal=False, task_id=None):
+    async def callback_dns(target, allow_internal=False, task_id=None, username=None):
         """Callback для DNS сканера"""
         try:
             logger.info(f"🔄 Запуск dns для {target}")
             from scanners.dns_scanner import DNSScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = DNSScanner(target, reports_dir)
             scanner.scan()
             scanner.display_results()
@@ -2408,16 +2987,16 @@ async def _register_scan_callbacks():
             logger.info(f"✓ dns завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске dns: {e}", exc_info=True)
+            raise
 
     # === RETIRE ===
-    async def callback_retire(target, allow_internal=False, task_id=None):
+    async def callback_retire(target, allow_internal=False, task_id=None, username=None):
         """Callback для Retire.js"""
         try:
             logger.info(f"🔄 Запуск retire для {target}")
             from scanners.retire_scanner import RetireScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = RetireScanner(target, reports_dir)
             results = scanner.scan()
             scanner.display_results()
@@ -2428,27 +3007,35 @@ async def _register_scan_callbacks():
             logger.info(f"✓ retire завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске retire: {e}", exc_info=True)
+            raise
 
     # === WHOIS ===
-    async def callback_whois(target, allow_internal=False, task_id=None):
+    async def callback_whois(target, allow_internal=False, task_id=None, username=None):
         """Callback для WHOIS сканера"""
         try:
-            logger.info(f"🔄 Запуск whois для {target}")
-            # whois сканер обычно работает синхронно
-            # Нужно добавить импорт и вызов реального сканера
-            logger.info(f"✓ whois завершен для {target}")
+            domain = extract_domain(target)
+            logger.info(f"🔄 Запуск whois для {domain}")
+            whois_result = await asyncio.to_thread(whois.whois, domain)
+            output = str(whois_result) if whois_result else ""
+            error = "" if output else "Whois returned empty result"
+            reports_dir = user_reports_dir(username) / (task_id or "scheduled")
+            await save_whois_report_async(domain, output, error, reports_dir)
+            if error:
+                raise RuntimeError(error)
+            logger.info(f"✓ whois завершен для {domain}")
+            return {"status": "completed", "output": output}
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске whois: {e}", exc_info=True)
+            raise
 
     # === WEB ===
-    async def callback_web(target, allow_internal=False, task_id=None):
+    async def callback_web(target, allow_internal=False, task_id=None, username=None):
         """Callback для Web сканера"""
         try:
             logger.info(f"🔄 Запуск web для {target}")
             from scanners.web_url_scanner import WebScanner
             # Создаём путь к папке для этого сканирования
-            reports_dir = str(Path(__file__).parent /
-                              "reports" / (task_id or "scheduled"))
+            reports_dir = str(user_reports_dir(username) / (task_id or "scheduled"))
             scanner = WebScanner(target, reports_dir)
             results = scanner.scan()
             scanner.display_results()
@@ -2459,6 +3046,7 @@ async def _register_scan_callbacks():
             logger.info(f"✓ web завершен для {target}")
         except Exception as e:
             logger.error(f"✗ Ошибка при запуске web: {e}", exc_info=True)
+            raise
 
     # Регистрируем все callbacks
     callbacks_map = {
@@ -2482,7 +3070,8 @@ async def _register_scan_callbacks():
 
 
 @app.get("/api/get-report-content")
-async def get_report_content(filename: str = Query(..., description="Имя файла отчета"), report_type: str = Query("json", description="Тип отчета: json, txt_report, или combined")):
+async def get_report_content(filename: str = Query(..., description="Имя файла отчета"), report_type: str = Query("json", description="Тип отчета: json, txt_report, или combined"),
+                            username: str = Depends(verify_token)):
     """
     Получить содержимое отчета для просмотра в браузере
     Args:
@@ -2500,7 +3089,7 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
             raise HTTPException(
                 status_code=400, detail="Недопустимое имя файла")
 
-        reports_base = Path(__file__).parent / "reports" / "combined"
+        reports_base = user_reports_dir(username) / "combined"
 
         if report_type == "json":
             file_path = reports_base / "json" / filename
@@ -2513,6 +3102,12 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
             if not file_path.exists() or not file_path.suffix.lower() == ".txt":
                 raise HTTPException(
                     status_code=404, detail="TXT файл не найден")
+
+        elif report_type in {"md", "markdown"}:
+            file_path = reports_base / "md" / filename
+            if not file_path.exists() or not file_path.suffix.lower() == ".md":
+                raise HTTPException(
+                    status_code=404, detail="Markdown файл не найден")
 
         else:
             raise HTTPException(
@@ -2531,7 +3126,8 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
                 # Для TXT файлов просто читаем
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                return PlainTextResponse(content, media_type="text/plain")
+                media_type = "text/markdown" if report_type in {"md", "markdown"} else "text/plain"
+                return PlainTextResponse(content, media_type=media_type)
         except UnicodeDecodeError:
             raise HTTPException(
                 status_code=500, detail="Ошибка при чтении файла (кодировка)")
@@ -2550,12 +3146,12 @@ async def get_report_content(filename: str = Query(..., description="Имя фа
 
 
 @app.get("/api/available-reports")
-async def get_available_reports():
+async def get_available_reports(username: str = Depends(verify_token)):
     """
     Получить список доступных JSON отчетов для выбора
     """
     try:
-        reports_base = Path(__file__).parent / "reports"
+        reports_base = user_reports_dir(username)
 
         # Структура для хранения отчетов
         available_reports = {
@@ -2565,11 +3161,20 @@ async def get_available_reports():
             'web': [],
             'cors': [],
             'osint': [],
+            'amass': [],
+            'wappalyzer': [],
+            'dns': [],
+            'retire': [],
+            'ssl-tls': [],
+            'whois': [],
             'combined': []
         }
 
         # Поиск отчетов по инструментам
-        tools = ['scanner', 'nuclei', 'nmap', 'web', 'cors', 'osint']
+        tools = [
+            'scanner', 'nuclei', 'nmap', 'web', 'cors', 'osint',
+            'amass', 'wappalyzer', 'dns', 'retire', 'ssl-tls', 'whois'
+        ]
 
         for tool in tools:
             json_dir = reports_base / tool / "json"
@@ -2685,11 +3290,10 @@ async def analyze_report_endpoint(
     try:
         # Получаем данные отчета из файла
         file_path = request_body.get("file_path")
-        if not file_path:
+        if not isinstance(file_path, str) or not file_path:
             raise HTTPException(status_code=400, detail="Укажите file_path в теле запроса")
         
-        reports_base = Path(__file__).parent / "reports"
-        full_path = reports_base / file_path
+        full_path = resolve_user_report_path(username, file_path)
         
         if not full_path.exists():
             raise HTTPException(status_code=404, detail=f"Отчет не найден: {file_path}")
@@ -2755,12 +3359,7 @@ async def get_report_content(
     Получить содержимое JSON отчета для аналитики
     """
     try:
-        # Защита от path traversal
-        if ".." in report_path or report_path.startswith('/'):
-            raise HTTPException(status_code=400, detail="Недопустимый путь")
-
-        reports_base = Path(__file__).parent / "reports"
-        full_path = reports_base / report_path
+        full_path = resolve_user_report_path(username, report_path)
 
         if not full_path.exists():
             raise HTTPException(status_code=404, detail="Файл не найден")

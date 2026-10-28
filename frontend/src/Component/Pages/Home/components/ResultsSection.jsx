@@ -1,5 +1,16 @@
 import React from 'react';
 
+const getStatusLabel = (status, language) => {
+    const labels = {
+        success: language === "ru" ? "Успешно" : "Succeeded",
+        no_findings: language === "ru" ? "Находок нет" : "No findings",
+        error: language === "ru" ? "Ошибка" : "Error",
+        timeout: language === "ru" ? "Тайм-аут" : "Timed out",
+        cancelled: language === "ru" ? "Отменено" : "Cancelled",
+    };
+    return labels[status] || (language === "ru" ? "Неизвестный статус" : "Unknown status");
+};
+
 const ResultsSection = ({ 
     results, 
     scanAborted, 
@@ -26,8 +37,41 @@ const ResultsSection = ({
                 </div>
             )}
             
-            {results.status === 'success' && results.combined_reports ? (
+            {results.combined_reports &&
+            Object.keys(results.combined_reports).length > 0 &&
+            results.status !== 'cancelled' ? (
                 renderCombinedResults(results, expandedJsonTools, setExpandedJsonTools)
+            ) : results.results ? (
+                <>
+                    <p className={`scan-status scan-status--${results.status}`}>
+                        {language === "ru" ? "Общий статус: " : "Overall status: "}
+                        {getStatusLabel(results.status, language)}
+                    </p>
+                    {results.error && (
+                        <div className="error-message" role="alert">
+                            {language === "ru" ? "Ошибка сканирования: " : "Scan error: "}
+                            {results.error}
+                        </div>
+                    )}
+                    {Object.entries(results.results).map(([toolName, toolResult]) => (
+                        <div key={toolName} className="result-section">
+                            <div className="result-header">
+                                <h4>{toolName.toUpperCase()}</h4>
+                                <span className={`scan-status scan-status--${toolResult.status}`}>
+                                    {getStatusLabel(toolResult.status, language)}
+                                </span>
+                            </div>
+                            {toolResult.error && (
+                                <div className={toolResult.status === "error" || toolResult.status === "timeout" ? "error-message" : ""}>
+                                    {toolResult.error}
+                                </div>
+                            )}
+                            <pre className="results__pre">
+                                {JSON.stringify(toolResult, null, 2)}
+                            </pre>
+                        </div>
+                    ))}
+                </>
             ) : (
                 Object.entries(results).map(([toolName, toolResult]) => (
                     <div key={toolName} className="result-section">

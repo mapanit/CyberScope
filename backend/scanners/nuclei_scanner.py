@@ -214,7 +214,7 @@ def save_json_report(results, summary, url, report_dir, reports_base_dir: str = 
     return filepath
 
 
-def simple_scan(url, reports_dir: str = None):
+def simple_scan(url, reports_dir: str = None, process_callback=None, timeout: int = 300):
     """
     Простое сканирование nuclei - выводит результаты с json форматом
 
@@ -225,85 +225,51 @@ def simple_scan(url, reports_dir: str = None):
     Returns:
         list: Список результатов (словари)
     """
+    if not re.match(r'^https?://', url, re.I):
+        url = f"http://{url}"
+
+    print(f"[*] Запускаем nuclei для сканирования {url}...", file=sys.stderr)
+    templates_dir = find_templates_directory()
+    cmd = ["nuclei", "-u", url, "-jsonl"]
+    if templates_dir:
+        cmd.extend(["-t", templates_dir])
+
+    process = None
     try:
-        # Убеждаемся что URL имеет схему
-        if not re.match(r'^http?://', url, re.I):
-            url = f"http://{url}"
-
-        print(f"[*] Запускаем nuclei для сканирования {url}...", file=sys.stderr)
-
-        # Ищем папку с шаблонами
-        templates_dir = find_templates_directory()
-
-        # Запускаем nuclei с JSONL выводом (построчный JSON)
-        cmd = ["nuclei", "-u", url, "-jsonl"]
-        
-        # Добавляем шаблоны если найдены
-        if templates_dir:
-            cmd.extend(["-t", templates_dir])
-            print(f"[*] Используются шаблоны из: {templates_dir}", file=sys.stderr)
-        else:
-            print(f"[*] Используются встроенные шаблоны nuclei", file=sys.stderr)
-
-        print(f"[*] Команда сканирования: {' '.join(cmd)}", file=sys.stderr)
-
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1,
-            universal_newlines=True
         )
-
-        results = []
-        line_count = 0
-
-        # Читаем JSON результаты построчно
-        for line in process.stdout:
-            line = line.strip()
-            if not line:  # Пропускаем пустые строки
-                continue
-            
-            # Пропускаем предупреждения и логи nuclei (они начинаются с [)
-            if line.startswith('['):
-                continue
-                
-            try:
-                result = json.loads(line)
-                results.append(result)
-                line_count += 1
-                # Выводим в stderr прогресс
-                info = result.get('info', {})
-                name = info.get('name', 'Unknown')
-                severity = info.get('severity', 'info').upper()
-                print(
-                    f"[+] Уязвимость #{line_count}: [{severity}] {name}", file=sys.stderr)
-            except json.JSONDecodeError:
-                # Молча игнорируем строки которые не JSON
-                continue
-
-        process.wait()
-
-        print(
-            f"[*] Сканирование завершено. Найдено {len(results)} уязвимостей", file=sys.stderr)
+        if process_callback:
+            process_callback(process)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            process.kill()
+            process.communicate()
+            raise TimeoutError(f"Nuclei timed out after {timeout} seconds") from exc
 
         if process.returncode != 0:
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                print(f"[!] Ошибка nuclei: {stderr_output}", file=sys.stderr)
+            raise RuntimeError(stderr.strip() or f"Nuclei exited with code {process.returncode}")
 
+        results = []
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith('['):
+                continue
+            try:
+                results.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        print(f"[*] Сканирование завершено. Найдено {len(results)} уязвимостей", file=sys.stderr)
         return results
-
-    except FileNotFoundError:
-        print("[ERROR] Nuclei не установлен! Установите через: go install -v github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest", file=sys.stderr)
-        return []
-    except KeyboardInterrupt:
-        print("[!] Сканирование прервано пользователем", file=sys.stderr)
-        return []
-    except Exception as e:
-        print(f"[ERROR] Ошибка при сканировании: {str(e)}", file=sys.stderr)
-        return []
+    except FileNotFoundError as exc:
+        raise RuntimeError("Nuclei не установлен на сервере") from exc
+    finally:
+        if process_callback:
+            process_callback(None)
 
 
 def get_summary(results):
@@ -340,7 +306,8 @@ def get_summary(results):
     return summary
 
 
-def run_scan(url, save_reports=True, reports_dir: str = None):
+def run_scan(url, save_reports=True, reports_dir: str = None, process_callback=None,
+             timeout: int = 300):
     """
     Функция для запуска сканирования с сохранением отчетов
     
@@ -359,11 +326,11 @@ def run_scan(url, save_reports=True, reports_dir: str = None):
         url = f"http://{url}"
     
     # Выполняем сканирование
-    results = simple_scan(url, reports_dir)
+    results = simple_scan(url, reports_dir, process_callback, timeout)
     summary = get_summary(results)
     
     response = {
-        'status': 'completed' if summary['total'] > 0 else 'no_findings',
+        'status': 'success' if summary['total'] > 0 else 'no_findings',
         'url': url,
         'total_findings': summary['total'],
         'by_severity': summary['by_severity'],

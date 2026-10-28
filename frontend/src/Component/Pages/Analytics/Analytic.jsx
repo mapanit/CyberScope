@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiFetch } from "../../../api";
 import {
   PieChart,
   Pie,
@@ -90,7 +91,7 @@ const Analytic = ({ language }) => {
       try {
         console.log('[DEBUG] Loading available reports...');
         
-        const response = await fetch("http://localhost:8000/api/available-reports", {
+        const response = await apiFetch("/api/available-reports", {
           headers: {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json"
@@ -143,7 +144,7 @@ const Analytic = ({ language }) => {
     console.log(`[DEBUG] Loading report: ${tool} - ${path}`);
     
     try {
-      const response = await fetch(`http://localhost:8000/api/report-content?report_path=${encodeURIComponent(path)}`, {
+      const response = await apiFetch(`/api/report-content?report_path=${encodeURIComponent(path)}`, {
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json"
